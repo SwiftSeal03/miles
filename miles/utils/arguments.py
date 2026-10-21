@@ -43,6 +43,7 @@ from miles.utils.object_store_config import (
     compute_mooncake_init_kwargs_from_env,
     compute_mooncake_init_kwargs_vanilla,
 )
+from miles.utils.output_store.config import add_output_store_arguments, check_output_store_args
 from miles.utils.rollout_topk_logprobs import validate_rollout_topk_logprobs_args
 from miles.utils.run_uuid import RUN_UUID_LENGTH, generate_run_uuid, validate_run_uuid
 from miles.utils.score_centering import validate_score_centering_args
@@ -2891,6 +2892,7 @@ def get_miles_extra_args_provider(add_custom_arguments=None):
         parser = add_network_arguments(parser)
         parser = add_reward_model_arguments(parser)
         parser = add_rollout_buffer_arguments(parser)
+        parser = add_output_store_arguments(parser)
         parser = add_mtp_training_arguments(parser)
         parser = add_prefill_decode_disaggregation_arguments(parser)
         parser = add_ci_arguments(parser)
@@ -4241,6 +4243,7 @@ def miles_validate_args(args):
         raise ValueError("--mini-ft-controller-enable requires --api-server-port to be set (non-zero)")
 
     _validate_deploy_component(args)
+    check_output_store_args(args)
 
 
 def validate_skip_actor_forward_only(args) -> None:
