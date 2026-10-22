@@ -17,4 +17,4 @@ register_cuda_ci(
 _MODE: str = "kill_train_rollout__dp2_cp2"
 
 if __name__ == "__main__":
-    run_ci(_MODE)
+    run_ci(_MODE, enable_dumper=False)

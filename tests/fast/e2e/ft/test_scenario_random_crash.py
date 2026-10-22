@@ -1,3 +1,4 @@
+import runpy
 from pathlib import Path
 
 import pytest
@@ -167,6 +168,7 @@ class TestTheLaunchedTrainArguments:
         assert "--sglang-remote-instance-weight-loader-start-seed-via-transfer-engine" in launch.argv
         assert launch.value_of("--num-rollout") == "9"
         assert launch.request.train_script.endswith("/train.py")
+        assert "--dumper-fwd-bwd" in launch.argv
 
     def test_the_launch_carries_the_shared_eager_deterministic_environment(self, harness: ScenarioHarness) -> None:
         """A respawned cell recompiling under torch.compile can OOM, so every soak launch must run eager."""
@@ -214,13 +216,18 @@ class TestTheLaunchedTrainArguments:
         self, harness: ScenarioHarness
     ) -> None:
         """Killing an engine that keeps generating across updates is the fault only this entry can produce."""
-        scenario_random_crash_fully_async.run_ci(fully_async_entry._MODE)
+        runpy.run_path(fully_async_entry.__file__, run_name="__main__")
 
         (launch,) = harness.launches
         (soak,) = harness.soaks
         assert launch.request.train_script.endswith("/train_async.py")
         assert set(soak["runner_config"].target_configs) == {ACTOR_CELL_TYPE, ROLLOUT_CELL_TYPE}
         assert MODES[fully_async_entry._MODE].has_real_rollout
+        assert not any(arg.startswith("--dumper-") for arg in launch.argv)
+        assert "--save-debug-event-data" in launch.argv
+        assert "--enable-event-analyzer" in launch.argv
+        assert "--enable-witness" in launch.argv
+        assert harness.checker_names == ["assert_hook_evidence", "assert_healing"]
 
     def test_a_fully_async_fake_rollout_run_is_refused_before_anything_is_prepared(
         self, harness: ScenarioHarness

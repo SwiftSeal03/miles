@@ -570,6 +570,7 @@ Same as the twin: model, parallelism, batch sizes, CLI and every assertion, by c
 ```
 
 - **Why it matters**: production fully-async keeps the engines generating across weight updates, so a crash lands the system in states no strictly-alternating soak reaches.
+- **Tensor dumps**: `test_random_crash_fully_async__kill_train_rollout__dp2_cp2.py` disables the tensor dumper. Its recovery and hook witnesses consume events, not tensor files; event recording and all assertions remain enabled. A random peer exit can strand a survivor in the dumper's cross-cell cleanup barrier. Other entries retain their dumper defaults, including comparison tests that consume weights and gradients.
 - **Why `--pause-generation-mode in_place`**: the default retract mode can deadlock `flush_cache` under load, and a soak whose verdict is "training finished without hanging" cannot tell that deadlock from the failure it exists to catch.
 - **Asserted before the cluster comes up**: `scenario_random_crash_fully_async`'s mode has real engines. Recorded rollout data would prove nothing about generating while training.
 - **Deliberately uncovered**: `train_async.py` without `--fully-async`, the strictly easier case, at tens of minutes to hours of 8-GPU time per soak.
