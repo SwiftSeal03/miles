@@ -439,3 +439,14 @@ def test_train_parallel_config_declares_schedule_support() -> None:
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__]))
+
+
+def test_balance_by_flops_balances_by_tokens_when_the_model_cannot_be_sized(monkeypatch):
+    unsized = SimpleNamespace(model_type="mystery", hidden_size=8, vocab_size=8, num_hidden_layers=1)
+    unsized.layer_types = ["chunked_attention"]
+    monkeypatch.setattr(dp_schedule, "load_hf_config", lambda hf_checkpoint: unsized)
+    dp_schedule._model_flops.cache_clear()
+    try:
+        assert dp_schedule._calculate_workloads([3, 1, 2], make_args(balance_by_flops=True)) == [3, 1, 2]
+    finally:
+        dp_schedule._model_flops.cache_clear()
