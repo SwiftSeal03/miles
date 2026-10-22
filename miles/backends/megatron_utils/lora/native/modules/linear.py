@@ -238,6 +238,16 @@ class LoRAUnreducedRowLinear(LoRALinear):
         return F.linear(F.linear(x, getattr(self, f"{self.param_prefix}_A")), getattr(self, f"{self.param_prefix}_B"))
 
 
+class LoRAReplicatedPlainLinear(LoRALinear):
+    """Replicated adapter on a plain local ``nn.Linear`` that every TP rank runs on the same input."""
+
+    host_returns_bias = False
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        assert self.layout == ShardLayout.REPLICATED, f"{type(self).__name__} requires a replicated projection"
+
+
 class LoRAGroupedColumnLinear(LoRALinear):
     """Column-parallel adapter on a grouped product: one ``A`` for every group, ``B`` split by group.
 

@@ -182,7 +182,7 @@ RUN pip install "git+https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git@v0.3
 
 # torch_memory_saver's source build needs TMS_CUDA_MAJOR; take it from torch.
 RUN TMS_CUDA_MAJOR=$(python3 -c "import torch; print(torch.version.cuda.split('.')[0])") \
-    pip install git+https://github.com/fzyzcjy/torch_memory_saver.git@b5588e83de86412a48689a6583a4b567e75f7acc --no-cache-dir --force-reinstall
+    pip install git+https://github.com/fzyzcjy/torch_memory_saver.git@118b09b3bc7b0cf386745db1eac2601d4aa7e681 --no-cache-dir --force-reinstall
 RUN pip install "nvidia-modelopt[torch]>=0.37.0" --no-build-isolation
 RUN pip install git+https://github.com/radixark/Megatron-Bridge.git@8cd3466d14d2337c8492827b3712482c2b3e4866 --no-deps --no-build-isolation
 RUN pip install megatron-energon --no-deps
