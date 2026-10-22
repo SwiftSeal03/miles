@@ -1,12 +1,6 @@
-"""Check that an installed Miles wheel can start an FSDP or torchtitan run without Megatron.
+"""An installed Miles wheel imports and parses args for FSDP and torchtitan with Megatron hidden.
 
-Megatron-LM, Megatron Bridge, mbridge, TransformerEngine and apex are made to look uninstalled, so
-the check fails if any module the FSDP or torchtitan path loads at import time reaches one of them,
-even on a machine where they are installed. The entry scripts are not part of the wheel, so they
-are loaded from the directory given on the command line. Run it from outside the checkout so
-``miles`` resolves to the installed wheel:
-
-    python tests/ci/wheel_smoke.py <checkout>
+Run from outside the checkout, so ``miles`` is the wheel: ``python tests/ci/wheel_smoke.py <checkout>``
 """
 
 import importlib
@@ -51,8 +45,7 @@ def _check_chat_templates() -> None:
 
 def main() -> None:
     checkout = Path(sys.argv[1]).resolve()
-    # A None entry is how a missing package looks: imports raise ModuleNotFoundError and
-    # importlib.util.find_spec probes return None, even where the package is installed.
+    # None: imports raise and find_spec returns None, as for an uninstalled package
     for name in MEGATRON_ONLY:
         sys.modules[name] = None
 

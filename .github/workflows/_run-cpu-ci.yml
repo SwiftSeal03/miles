@@ -41,9 +41,7 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
-      # Local actions load from the checked-out tree, and the ref under test may predate
-      # them (/rerun-test on an old PR head, release CI on a release branch); take them
-      # from the commit this workflow runs from.
+      # local actions load from the checked-out ref, which may predate them (/rerun-test, release CI)
       - name: Checkout CI actions
         uses: actions/checkout@v4
         with:

@@ -22,9 +22,7 @@ setup(
         "fsdp": [
             "torch>=2.0",
         ],
-        # torchtitan backend: the 0.3.0 release Miles' adapters are written against. It
-        # imports torch APIs added in 2.13 (validate_torchtitan_args checks the same floor)
-        # but does not declare torch itself
+        # torchtitan 0.3.0 needs torch>=2.13 but does not declare torch
         "torchtitan": [
             "torch>=2.13",
             "torchtitan==0.3.0",

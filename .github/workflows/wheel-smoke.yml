@@ -1,13 +1,7 @@
 name: Wheel smoke
 
-# Builds the Miles sdist and wheel, installs the wheel (torchtitan extra) into a clean
-# environment that has no Megatron, and runs tests/ci/wheel_smoke.py: the FSDP and torchtitan
-# entry paths must import and parse their arguments from the installed wheel alone.
-#
-# SGLang is a source tree on PYTHONPATH, resolved like every other CI job (ci-sglang-pr:, then
-# release-lock.json, then sglang-miles), until a hosted sglang-miles wheel exists. Its runtime
-# imports come from tests/ci/requirements-ci-cpu.txt, with torch overridden to the version that
-# SGLang tree pins, which the torchtitan backend needs.
+# The built wheel, installed without Megatron, must import and parse args for FSDP and torchtitan.
+# SGLang stays a source tree on PYTHONPATH until a hosted sglang-miles wheel exists.
 
 on:
   push:
@@ -55,8 +49,7 @@ jobs:
       - name: Install the wheel into a clean environment
         shell: bash
         run: |
-          # sglang-miles' torch pin replaces the CPU stage's; torchvision is unpinned so uv
-          # picks the build that matches it.
+          # torch follows sglang's pin (torchtitan needs >=2.13), torchvision follows torch
           python3 -c "import tomllib; deps = tomllib.load(open('sglang/python/pyproject.toml', 'rb'))['project']['dependencies']; print(next(d for d in deps if d.startswith('torch==')))" \
             > "$RUNNER_TEMP/overrides.txt"
           echo torchvision >> "$RUNNER_TEMP/overrides.txt"
