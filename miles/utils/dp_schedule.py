@@ -36,12 +36,19 @@ class DPSchedule(NamedTuple):
 
 
 @functools.cache
-def _model_flops(hf_checkpoint: str) -> ModelFlops:
-    return model_flops_from_hf_config(load_hf_config(hf_checkpoint))
+def _model_flops(hf_checkpoint: str) -> ModelFlops | None:
+    hf_config = load_hf_config(hf_checkpoint)
+    try:
+        return model_flops_from_hf_config(hf_config)
+    except Exception as e:
+        logger.warning(f"--balance-by-flops balances by token count, the HF config could not be sized: {e!r}")
+        return None
 
 
 def _calculate_workloads(step_lengths, args):
     model_flops = _model_flops(args.hf_checkpoint)
+    if model_flops is None:
+        return list(step_lengths)
     return [model_flops.fwd_flops([sl]) for sl in step_lengths]
 
 
