@@ -27,6 +27,7 @@ from megatron.training.training import get_model
 
 from miles.backends.megatron_utils.ft.indep_dp import allreduce_grads_and_losses_across_replicas
 from miles.backends.megatron_utils.local_weight_checksum import dump_local_weight_checksums
+from miles.backends.megatron_utils.lora.native import wrap_model_provider_with_lora
 from miles.backends.megatron_utils.optimizer_state_reset import reset_optimizer_states
 from miles.backends.training_utils.data.rollout import DataIterator, get_batch
 from miles.backends.training_utils.data.sampling_mask import get_rollout_sampling_masks
@@ -49,7 +50,8 @@ from miles.utils.audit_utils.witness.module import witness_dump_and_clear_stale
 from miles.utils.dumper_utils import DumperMegatronUtil, DumperPhase
 from miles.utils.lora.utils import is_multi_lora_enabled
 from miles.utils.memory_utils import clear_memory
-from miles.utils.test_utils.ft_test_actions import FTTestActionActorExecutor
+from miles.utils.test_utils.fault_injector.controller import reach_fault_hook
+from miles.utils.test_utils.fault_injector.models import FaultHookName
 from miles.utils.tracking_utils.structured_log import log_structured
 from miles.utils.types import SampleLineage
 
@@ -63,7 +65,12 @@ from .ci_utils import (
     save_model_hashes,
 )
 from .initialize import is_first_replica_megatron_main_rank
-from .lora.utils import is_lora_enabled, is_lora_model
+from .lora.utils import (
+    is_lora_enabled,
+    is_lora_model,
+    patch_param_grad_buffer_for_colocate_mode_lora,
+    restore_lora_adapter,
+)
 from .model_provider import get_model_provider_func
 from .parallel import get_packed_seq_params
 
@@ -157,36 +164,21 @@ def setup_model_and_optimizer(
     assert not args.moe_use_upcycling
     assert args.load is not None or args.pretrained_checkpoint is not None
 
+    lora_attached = is_multi_lora_enabled(args) or (is_lora_enabled(args) and role == "actor")
     # Multi-LoRA and single-LoRA (actor, bridge) both build via the bridge helper,
     # which picks the adapter type internally.
-    if is_multi_lora_enabled(args) or (
-        is_lora_enabled(args) and role == "actor" and args.megatron_to_hf_mode == "bridge"
-    ):
+    if is_multi_lora_enabled(args) or (lora_attached and args.megatron_to_hf_mode == "bridge"):
         model = _setup_lora_model_via_bridge(args)
         enforce_marked_param_dtypes(model)
     else:
         provider_func = get_model_provider_func(args, role)
-        if is_lora_enabled(args) and role == "actor":
-            if "inkling" in (args.custom_model_provider_path or ""):
-                assert args.lora_type == "lora", "Native Inkling does not implement --lora-type canonical_lora"
-                from miles_plugins.models.inkling.lora import wrap_model_provider_with_inkling_lora
-
-                provider_func = wrap_model_provider_with_inkling_lora(provider_func, args)
-            # TODO: will rewrite in native lora refactor
-            elif "kimi_k3" in (args.model_name or "").lower():
-                from miles_plugins.models.kimi_k3.lora import wrap_model_provider_with_kimi_k3_lora
-
-                from .lora.utils import patch_param_grad_buffer_for_colocate_mode_lora
-
-                provider_func = wrap_model_provider_with_kimi_k3_lora(provider_func, args)
-                if args.offload_train:
-                    patch_param_grad_buffer_for_colocate_mode_lora()
-            else:
-                raise AssertionError(
-                    "Native LoRA injection is only implemented for Inkling and Kimi K3; "
-                    "use --megatron-to-hf-mode bridge"
-                )
+        if lora_attached:
+            provider_func = wrap_model_provider_with_lora(provider_func, args)
+            if args.offload_train:
+                patch_param_grad_buffer_for_colocate_mode_lora()
         model = get_model(provider_func, ModelType.encoder_or_decoder)
+    for model_chunk in model:
+        model_chunk.lora_attached = lora_attached
 
     if args.debug_disable_optimizer:
         if is_first_replica_megatron_main_rank():
@@ -580,7 +572,6 @@ def train_one_step(
     num_rollouts: int,
     witness_info: WitnessInfo | None,
     attempt: int,
-    ft_test_action_executor: FTTestActionActorExecutor | None = None,
 ) -> tuple[dict[str, float], float, TrainStepOutcome]:
     """Run pipeline forward/backward, then step the optimizer and scheduler when gradients are valid."""
     args = get_args()
@@ -617,8 +608,7 @@ def train_one_step(
     if parallel_state.indep_dp.size > 1:
         assert step_id == 0, "indep-dp does not support multi step per train yet"
 
-        if ft_test_action_executor is not None:
-            ft_test_action_executor.maybe_crash(rollout_id=rollout_id, attempt=attempt)
+        reach_fault_hook(FaultHookName.TRAINER_STEP_BEFORE_ALLREDUCE, rollout_id=rollout_id, attempt=attempt)
 
         metric_num_rollouts = None if args.calculate_per_token_loss else num_rollouts
         ok, indep_dp_loss_reduced = allreduce_grads_and_losses_across_replicas(
@@ -749,7 +739,6 @@ def train(
     num_rollouts: Sequence[int],
     witness_info: WitnessInfo | None,
     attempt: int,
-    ft_test_action_executor: FTTestActionActorExecutor | None = None,
 ) -> TrainStepOutcome:
     """Run training over a rollout consisting of multiple steps.
 
@@ -828,7 +817,6 @@ def train(
             num_rollouts[step_id],
             witness_info=witness_info,
             attempt=attempt,
-            ft_test_action_executor=ft_test_action_executor,
         )
 
         if step_id == 0:
@@ -1022,11 +1010,13 @@ def load_model_state(
         load_ctx = nullcontext()
 
     load_dir = getattr(args, "load", None)
-    native_optimizer_restored = False
     # --load may be unset: setup_model_and_optimizer already asserted pretrained_checkpoint covers it.
-    if load_dir is None or _has_loadable_ckpt(load_dir):
+    explicit_selection = getattr(args, "ckpt_step", None) is not None or getattr(
+        args, "exit_on_missing_checkpoint", False
+    )
+    if load_dir is None or explicit_selection or _has_loadable_ckpt(load_dir):
         with load_ctx:
-            iteration, restored_trained_iteration, native_optimizer_restored = load_checkpoint(
+            iteration, restored_trained_iteration = load_checkpoint(
                 model,
                 optimizer,
                 opt_param_scheduler,
@@ -1039,21 +1029,13 @@ def load_model_state(
         iteration = 0
         restored_trained_iteration = not args.finetune
 
-    if (
-        is_lora_enabled(args)
-        and role == "actor"
-        and args.megatron_to_hf_mode != "bridge"
-        and getattr(args, "lora_adapter_path", None)
-        and "inkling" in (getattr(args, "custom_model_provider_path", None) or "")
-    ):
-        if (Path(args.lora_adapter_path) / "adapter_model.safetensors").exists() and not native_optimizer_restored:
-            from miles_plugins.models.inkling.lora import load_inkling_lora_adapter
-
-            load_inkling_lora_adapter(model, args.lora_adapter_path)
-            if optimizer is not None:
-                # refresh the fp32 masters, or the first step() restores the
-                # pre-load init values over the adapter we just wrote
-                optimizer.reload_model_params()
+    if is_lora_enabled(args) and role == "actor" and args.lora_adapter_path is not None:
+        adapter_iteration = restore_lora_adapter(
+            model, args, optimizer=optimizer, opt_param_scheduler=opt_param_scheduler
+        )
+        if adapter_iteration is not None:
+            iteration = adapter_iteration
+            restored_trained_iteration = True
 
     check_peak_gpu_memory_after_load(args)
     clear_memory()
