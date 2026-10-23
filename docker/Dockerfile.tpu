@@ -12,9 +12,9 @@ FROM lmsysorg/sglang:${SGLANG_TPU_IMAGE_TAG}
 # ======================================== Arguments =============================================
 
 ARG SGLANG_TPU_REPO=sgl-project/sglang-torchtpu
-# sglang-torchtpu main (2026-10-22) plus sgl-project/sglang-torchtpu#1609 (MoE weight reload); fetched by SHA,
-# which GitHub serves from the PR refs. Drop it for a release image tag once it ships.
-ARG SGLANG_TPU_COMMIT=2a98545d284f5538ad6e3ee9d3c28817f2e9294d
+# sglang-torchtpu main (2026-10-23), which carries sgl-project/sglang-torchtpu#1578 (weight checksum) and #1609 (MoE
+# weight reload); swap it for a release image tag once one ships.
+ARG SGLANG_TPU_COMMIT=424eda39093ad8f1906bbefa295fa3da50e8da11
 ARG TORCH_VERSION=2.14.1
 ARG TORCHVISION_VERSION=0.29.1
 # the triton torch 2.14 pairs with; torchtitan imports triton unconditionally
