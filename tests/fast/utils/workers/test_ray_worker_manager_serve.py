@@ -252,12 +252,14 @@ class TestServeSchedulingOptions:
         await _launch([_make_spec(worker_class=_GROUPED_WORKER_CLASS_PATH, concurrency_groups=_GROUPED_WORKER_GROUPS)])
 
         assert _options(fake_ray_cluster)[0]["concurrency_groups"] == _GROUPED_WORKER_GROUPS
+        assert _options(fake_ray_cluster)[0]["allow_out_of_order_execution"] is True
 
     async def test_absent_concurrency_groups_are_not_passed_to_ray(self, fake_ray_cluster: FakeRayCluster):
         """Passing an empty group mapping would change how ray schedules the actor."""
         await _launch([_make_spec()])
 
         assert "concurrency_groups" not in _options(fake_ray_cluster)[0]
+        assert "allow_out_of_order_execution" not in _options(fake_ray_cluster)[0]
 
     async def test_the_routed_methods_are_annotated_on_a_subclass(self, fake_ray_cluster: FakeRayCluster):
         """A declared group nobody is routed to leaves the isolated rpc queued behind the default group."""
@@ -589,6 +591,7 @@ class TestServeWorkersUnderRpcComm:
         await _launch_rpc(_make_spec(concurrency_groups={"heartbeat_status": 1, "default": 1}))
 
         assert "concurrency_groups" not in _options(fake_ray_cluster)[0]
+        assert "allow_out_of_order_execution" not in _options(fake_ray_cluster)[0]
 
     async def test_no_server_is_started_under_ray_communication(self, fake_ray_cluster: FakeRayCluster):
         """The two modes coexist, so the ray mode must keep launching the worker as the actor itself."""

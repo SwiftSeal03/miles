@@ -472,7 +472,7 @@ class _CommandActorManager(_BaseActorManager[CommandWorkerSpec]):
 class _ServeActorRayCommManager(_BaseActorManager[ServeWorkerSpec]):
     def _compute_remote_options(self) -> dict:
         groups = self.spec.concurrency_groups
-        return {} if groups is None else dict(concurrency_groups=groups)
+        return {} if groups is None else dict(concurrency_groups=groups, allow_out_of_order_execution=True)
 
     async def launch_actor(self) -> None:
         self.actor_handle = self._create_actor(
