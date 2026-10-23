@@ -14,7 +14,7 @@ from miles.utils.data import get_minimum_num_micro_batch_size, process_rollout_d
 from miles.utils.ft_utils.process_group_utils import GeneralPGUtil
 from miles.utils.object_store import ObjectStoreGetResult
 from miles.utils.ray_utils import Box
-from miles.utils.seqlen_balancing import expand_bins_by_splitting, first_fit_pack
+from miles.utils.seqlen_balancing import expand_bins_by_splitting, first_fit_pack, get_seqlen_balanced_partitions
 from miles.utils.types import RolloutBatch
 
 logger = logging.getLogger(__name__)
@@ -464,8 +464,9 @@ def get_data_iterator(
       micro-batches of `micro_batch_size`.
     - If True, computes the number of micro-batches per local step based on
       `max_tokens_per_gpu` and per-sample lengths, all-reduces to a DP-wide
-      maximum, rounds up for Virtual Pipeline Parallelism (VPP), and splits packed bins
-      to align micro-batch counts without increasing their token counts.
+      maximum, rounds up for Virtual Pipeline Parallelism (VPP), and builds a balanced
+      index schedule; if balancing overflows `max_tokens_per_gpu`, it splits first-fit bins
+      to the micro-batch count instead.
 
     Returns `(data_iterators, num_microbatches)` where:
     - `data_iterators`: list of `DataIterator`, one per VPP stage (size 1 if VPP disabled)
@@ -548,10 +549,13 @@ def get_data_iterator(
         for i, num_mbs in enumerate(num_microbatches):
             start, end = i * num_local_gbs, (i + 1) * num_local_gbs
             samples = rollout_data["total_lengths"][start:end]
-            # Repartitioning balanced lengths can overflow bins that already fit the token budget.
-            partitions = first_fit_pack(samples, args.max_tokens_per_gpu * cp_size)
-            expand_bins_by_splitting(partitions, num_mbs, samples)
-            assert len(partitions) == num_mbs, f"cannot split {len(samples)} samples into {num_mbs} microbatches"
+            partitions = get_seqlen_balanced_partitions(samples, num_mbs, equal_size=False)
+            budget = args.max_tokens_per_gpu * cp_size
+            if max(sum(samples[k] for k in partition) for partition in partitions) > budget:
+                # Balancing can overflow a bin even though first-fit fits num_mbs bins in the budget.
+                partitions = first_fit_pack(samples, budget)
+                expand_bins_by_splitting(partitions, num_mbs, samples)
+                assert len(partitions) == num_mbs, f"cannot split {len(samples)} samples into {num_mbs} microbatches"
             for j in range(num_mbs):
                 for k in range(len(partitions[j])):
                     partitions[j][k] += start
