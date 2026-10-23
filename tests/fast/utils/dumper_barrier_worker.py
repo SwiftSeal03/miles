@@ -1,4 +1,5 @@
 import threading
+import time
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -21,8 +22,9 @@ def run_missing_dump_peer(rank: int, world_size: int, port: int) -> None:
     dist.barrier()
     try:
         if rank == 0:
-            heartbeat = threading.Event()
-            timer = threading.Timer(0.5, heartbeat.set)
+            heartbeat_times: list[float] = []
+            started_at = time.monotonic()
+            timer = threading.Timer(0.5, lambda: heartbeat_times.append(time.monotonic()))
             timer.start()
             try:
                 with (
@@ -31,7 +33,8 @@ def run_missing_dump_peer(rank: int, world_size: int, port: int) -> None:
                     patch("miles.utils.dumper_utils.logger") as logger,
                 ):
                     _barrier_after_dump_dir_cleanup()
-                assert heartbeat.is_set(), "Heartbeat could not run during the dump barrier"
+                assert heartbeat_times, "Heartbeat could not run during the dump barrier"
+                assert heartbeat_times[0] - started_at < 1.5, "Heartbeat was delayed until barrier timeout"
                 assert logger.error.call_count == 1
                 nccl_group.barrier.assert_not_called()
             finally:

@@ -323,7 +323,9 @@ class TestBarrierAfterDumpDirCleanup:
 
     @staticmethod
     def _run(group: MagicMock) -> None:
-        state = SimpleNamespace(indep_dp=SimpleNamespace(rank=1, size=2, group=MagicMock(), gloo_group=group, debug_info={"quorum": 7}))
+        state = SimpleNamespace(
+            indep_dp=SimpleNamespace(rank=1, size=2, group=MagicMock(), gloo_group=group, debug_info={"quorum": 7})
+        )
         with (
             patch("miles.utils.dumper_utils.get_parallel_state", return_value=state),
             patch("miles.utils.dumper_utils.dist") as mock_dist,
@@ -359,7 +361,9 @@ class TestBarrierAfterDumpDirCleanup:
         """A peer death aborts the cross-cell PG mid-barrier; the survivor continues instead of erroring."""
         group = MagicMock()
         group.barrier.side_effect = RuntimeError("NCCL communicator was aborted on rank 1")
-        state = SimpleNamespace(indep_dp=SimpleNamespace(rank=1, size=2, group=MagicMock(), gloo_group=group, debug_info={"quorum": 0}))
+        state = SimpleNamespace(
+            indep_dp=SimpleNamespace(rank=1, size=2, group=MagicMock(), gloo_group=group, debug_info={"quorum": 0})
+        )
 
         with (
             patch("miles.utils.dumper_utils.get_parallel_state", return_value=state),
