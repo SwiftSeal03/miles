@@ -11,8 +11,8 @@ from torchft.process_group import ProcessGroupGloo
 from miles.utils.dumper_utils import _barrier_after_dump_dir_cleanup
 
 
-def run_missing_dump_peer(rank: int, world_size: int, port: int) -> None:
-    init_gloo(rank, world_size, port=port)
+def _run_missing_dump_peer(rank: int, world_size: int, port: int) -> None:
+    init_gloo(rank=rank, world_size=world_size, port=port)
     dump_group = dist.new_group(backend="gloo", timeout=timedelta(seconds=2))
     wrapped = ProcessGroupGloo(pg=dump_group)
     nccl_group = MagicMock()

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import torch
 from tests.fast.dist_utils import run_multiprocess
-from tests.fast.utils.dumper_barrier_worker import run_missing_dump_peer
+from tests.fast.utils.dumper_barrier_worker import _run_missing_dump_peer
 
 from miles.backends.training_utils.model_companion import ModelCompanion
 from miles.utils import dumper_utils
@@ -319,7 +319,7 @@ class TestDumperMegatronUtilFinalize:
 class TestBarrierAfterDumpDirCleanup:
     def test_a_missing_peer_times_out_without_blocking_heartbeat_or_other_communication(self) -> None:
         """A missing dump participant must not strand a survivor or starve its heartbeat thread."""
-        run_multiprocess(run_missing_dump_peer)
+        run_multiprocess(_run_missing_dump_peer)
 
     @staticmethod
     def _run(group: MagicMock) -> None:
