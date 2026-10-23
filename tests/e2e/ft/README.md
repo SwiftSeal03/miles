@@ -559,6 +559,8 @@ Fault recovery must not cost end-to-end learning, which the comparison scenarios
 
 ### `scenario_random_crash_fully_async` and `scenario_realistic_gsm8k_fully_async`
 
+- **Random-crash Ray shutdown**: the test entry resumes rollout health checks after training, then waits for the external observer to record all expected cells alive and ready before disposal. Its bounded wait includes the configured health-check grace periods; final-state assertions remain strict.
+
 ```
 Type: shells - each calls its sync twin with fully_async=True and pins nothing else
 Entries: test_random_crash_fully_async__kill_train_rollout__dp2_cp2.py,
