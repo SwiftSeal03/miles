@@ -44,6 +44,7 @@ from tests.utils.soak.ft.entrypoint import run_cell_soak
 from tests.utils.soak.ft.types import ACTOR_CELL_TYPE, ROLLOUT_CELL_TYPE, FaultTrigger
 
 from miles.utils.external_utils import command_utils
+from miles.utils.workers.types import ClusterBackend
 
 app: typer.Typer = typer.Typer()
 
@@ -201,7 +202,16 @@ def _run_soak(
                     train_args=train_args,
                     mode=ft_mode,
                     config=config,
-                    train_script=get_train_script(fully_async=fully_async),
+                    train_script=(
+                        "tests/utils/soak/ft/training.py"
+                        if config.cluster_backend is ClusterBackend.RAY
+                        else get_train_script(fully_async=fully_async)
+                    ),
+                    extra_env_vars=(
+                        {"MILES_SOAK_EVENT_LOG": str(event_log.path)}
+                        if config.cluster_backend is ClusterBackend.RAY
+                        else None
+                    ),
                 ),
                 accept_replaced=False,
             ),
