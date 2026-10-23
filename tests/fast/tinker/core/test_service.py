@@ -195,6 +195,15 @@ async def test_an_exhausted_context_never_reaches_the_engine(service, prompt_len
     assert service.backend.named("sample") == []
 
 
+@pytest.mark.parametrize("scoring", [{"prompt_logprobs": True}, {"topk_prompt_logprobs": 2}])
+async def test_a_sequence_sampled_to_the_window_can_be_scored(service, scoring):
+    service.config.max_tokens_per_sample = 8
+    payload = {"num_samples": 1, "prompt_tokens": [1] * 8, "sampling_params": {"max_tokens": 1}} | scoring
+    request_id, _ = service.submit_sample("tenant", payload)
+    assert (await await_settled(service, "tenant", request_id)).state == DONE
+    assert service.backend.named("sample")[0]["payload"]["sampling_params"] == {"max_tokens": 0}
+
+
 async def test_a_short_inference_window_does_not_shrink_the_training_window(service):
     service.config.max_tokens_per_sample = 2
     service.config.max_tokens_per_datum = 8
