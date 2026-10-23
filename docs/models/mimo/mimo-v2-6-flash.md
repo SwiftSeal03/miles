@@ -60,6 +60,19 @@ On two 8×H200 nodes with node-local NVMe (4-drive RAID0), a step with 16 sample
 
 `--mode sft --prompt-data <chat jsonl>` trains SFT instead. It reads a `messages` column; put a reasoning trace in `reasoning_content`, since the MiMo chat template renders `<think>{reasoning_content}</think>`.
 
+### 4.2 Multi-LoRA through the Tinker gateway
+
+`scripts/run_mimo_v2_6_flash_tinker.py` serves [multi-LoRA training](/advanced/lora#multi-lora-training) on the same BF16 conversion: `prepare` converts the checkpoint and `serve` starts the gateway, which clients drive as in the [gateway example](/examples/multi-lora). The adapters cover q/k/v/o, the MLP (dense layer 0 and the routed experts) and `lm_head`.
+
+Multi-LoRA keeps every adapter's gradients on the training GPUs between calls, so training and sampling use separate GPUs, with PP 1 and no offload. The default layout trains on TP4 × EP16 (16 GPUs) next to one TP8 engine, 24 GPUs over three nodes, for 4 adapters of rank 32:
+
+```bash
+MILES_SCRIPT_EXTERNAL_RAY=1 MASTER_ADDR=<head ip> python scripts/run_mimo_v2_6_flash_tinker.py serve \
+    --model-name MiMo-V2.6-Flash-RL-bf16 --num-nodes 3
+```
+
+`--actor-num-gpus 8 --expert-model-parallel-size 8` fits the base on 8 training GPUs, but the expert adapters then leave room for only about `n_adapters × lora_rank ≤ 64` (an estimate, not measured). Sampling also needs SGLang LoRA support for MiMo-V2 (per-layer qkv widths, the 128-dim value head, the dense first layer, and skipping the vision/audio towers) from [sgl-project/sglang#45939](https://github.com/sgl-project/sglang/pull/45939), which is not in `sglang-miles` yet.
+
 ## 5. Recipe Configuration
 
 ### 5.1 Parallelism
