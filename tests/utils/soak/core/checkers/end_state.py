@@ -1,5 +1,9 @@
+import logging
+
 from tests.utils.soak.core.events import SoakEvent, SoakObservationEvent
 from tests.utils.soak.core.views import tail_started_at
+
+logger = logging.getLogger(__name__)
 
 _MAX_FINAL_OBSERVATION_AGE_SECONDS: float = 60.0
 
@@ -15,6 +19,7 @@ def assert_end_state_complete(
 
     assert observations, "Soak ended without any observation"
     observation = observations[-1]
+    logger.info("soak op=end_state observation=%s", observation.model_dump_json())
     assert observation.targets is not None, "Soak ended on a failed observation"
     assert not observation.errors, f"Soak ended on an observation with errors: {observation.errors}"
     if observation_ends_with_sut:
@@ -33,4 +38,6 @@ def assert_end_state_complete(
         ), f"Soak ended with {len(targets)} {kind} targets, expected {expected_count}"
         assert all(
             target.alive and target.ready for target in targets
-        ), f"Soak ended with a {kind} target that is not alive and ready"
+        ), f"Soak ended with a {kind} target that is not alive and ready: " + repr(
+            [target for target in targets if not (target.alive and target.ready)]
+        )
