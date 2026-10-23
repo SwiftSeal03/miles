@@ -4,6 +4,7 @@
 
 - `serve_qwen3_30b_a3b_tinker.py`: prepare Qwen3-30B-A3B and launch the gateway.
 - `run_multi_tenant_example.py`: check marker memorization for one client or adapter isolation across concurrent tenants.
+- `tinker_agent/`: train on agent rollouts; see [Train on agent rollouts](#train-on-agent-rollouts).
 
 ## Layout
 
@@ -37,8 +38,9 @@ python examples/multi_lora/serve_qwen3_30b_a3b_tinker.py serve     # Tinker API 
 
 Checkpoints default to `<output_dir>/checkpoints/<run_id>`; use `--save-dir` to choose another root.
 
-The launcher passes `--log-probs-chunk-size 1024` to bound FP32 cross-entropy
-temporaries for full-sequence targets. Override it through `--extra-args` when needed.
+The launcher sets `--log-probs-chunk-size 1024`, so log-probs over long sequences are
+computed 1024 tokens at a time to keep peak GPU memory down. To change it, add for example
+`--extra-args "--log-probs-chunk-size 2048"` to the `serve` command.
 
 Install `tinker` on the client, then run the marker checks:
 
@@ -50,6 +52,34 @@ python examples/multi_lora/run_multi_tenant_example.py --base-model /root/models
 # passing means the adapters stayed isolated end to end
 python examples/multi_lora/run_multi_tenant_example.py --base-model /root/models/Qwen3-30B-A3B --mode multi --clients 4
 ```
+
+## Train on agent rollouts
+
+To train on what an agent did, for example a coding agent in a sandbox, run the
+agent against the Tinker capture proxy with the client package in
+[tinker_agent](./tinker_agent/README.md). It records each model call's exact tokens
+and log-probs and turns an episode into training data.
+
+## Context window
+
+Each sampled sequence, prompt plus completion, must fit one window: the smaller of
+
+- the trainer's per-sequence limit, `--max-tokens-per-gpu` rounded down to a multiple of
+  TP × `--data-pad-size-multiplier`, times the context-parallel size; and
+- the inference limit, `--sglang-context-length` (the model's maximum length if unset)
+  minus 7 tokens, so SGLang still accepts a full-window sequence as a prompt.
+
+With the launcher's defaults the window is 8192 tokens.
+
+When you sample, the gateway:
+
+- lowers `max_tokens` to what is left in the window. The request you sent is unchanged.
+- rejects a prompt that leaves no room to generate with HTTP 400 `prompt is too long`,
+  before the prompt reaches the engine. Agents can use this error to compact their history.
+- still scores a full-window sequence with `compute_logprobs`.
+
+Training datums are checked only against the trainer limit, so a shorter inference window
+does not shrink what you can train on.
 
 ## Supported inputs
 
