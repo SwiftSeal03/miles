@@ -14,7 +14,7 @@ def _get_microbatches(monkeypatch, lengths, dp_microbatches, vpp_size=1, group_s
         microbatch_group_size_per_vp_stage=group_size,
     )
     monkeypatch.setattr(rollout, "get_parallel_state", lambda: state)
-    monkeypatch.setattr(torch.cuda, "current_device", lambda: torch.device("cpu"))
+    monkeypatch.setattr(rollout.current_platform, "current_device", lambda: torch.device("cpu"))
     monkeypatch.setattr(
         rollout.GeneralPGUtil,
         "create",
