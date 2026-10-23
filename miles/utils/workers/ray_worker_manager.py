@@ -516,7 +516,7 @@ class _ServeActorRayCommManager(_BaseActorManager[ServeWorkerSpec]):
 
 def _route_method_to_concurrency_group(method: Callable, *, group: str) -> Callable:
     @functools.wraps(method)
-    def routed(self: Any, *args: Any, **kwargs: Any) -> Any:
+    def routed(self, *args, **kwargs):
         return method(self, *args, **kwargs)
 
     routed.__signature__ = inspect.signature(method)
