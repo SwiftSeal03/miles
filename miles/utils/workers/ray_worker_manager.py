@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import logging
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
@@ -472,7 +473,7 @@ class _CommandActorManager(_BaseActorManager[CommandWorkerSpec]):
 class _ServeActorRayCommManager(_BaseActorManager[ServeWorkerSpec]):
     def _compute_remote_options(self) -> dict:
         groups = self.spec.concurrency_groups
-        return {} if groups is None else dict(concurrency_groups=groups, allow_out_of_order_execution=True)
+        return {} if groups is None else dict(concurrency_groups=groups)
 
     async def launch_actor(self) -> None:
         self.actor_handle = self._create_actor(
@@ -515,9 +516,11 @@ class _ServeActorRayCommManager(_BaseActorManager[ServeWorkerSpec]):
 
 def _route_method_to_concurrency_group(method: Callable, *, group: str) -> Callable:
     @functools.wraps(method)
-    def routed(self, *args, **kwargs):
+    def routed(self: Any, *args: Any, **kwargs: Any) -> Any:
         return method(self, *args, **kwargs)
 
+    routed.__signature__ = inspect.signature(method)
+    del routed.__wrapped__
     return ray.method(concurrency_group=group)(routed)
 
 
