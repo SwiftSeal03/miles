@@ -41,9 +41,10 @@ async def serve(args, *, disposer: Disposer):
         trainer_token_limit = local_token_limit * args.context_parallel_size
         max_tokens_per_datum = min(max_tokens_per_datum, trainer_token_limit)
     assert max_tokens_per_datum > 0, "trainer token budget must fit at least one padding block"
-    max_tokens_per_sample = max_tokens_per_datum
-    if args.sglang_context_length is not None:
-        max_tokens_per_sample = min(max_tokens_per_sample, args.sglang_context_length)
+    engine_context_length = args.sglang_context_length or hf_config.max_position_embeddings
+    # SGLang rejects inputs with len >= min(context_len - 1, kv_capacity - 1) - 5, assuming the KV pool
+    # exceeds one context; a sequence sampled up to the window must still be accepted as a scoring prompt.
+    max_tokens_per_sample = min(max_tokens_per_datum, engine_context_length - 7)
     _worker_manager = init_orchestration_script(args, disposer=disposer)
     init_http_client(args)
 
