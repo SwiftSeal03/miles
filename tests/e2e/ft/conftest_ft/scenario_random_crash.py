@@ -192,9 +192,7 @@ def _run_soak(
                         else get_train_script(fully_async=fully_async)
                     ),
                     extra_env_vars=(
-                        {"MILES_SOAK_EVENT_LOG": str(event_log.path)}
-                        if wait_for_terminal_readiness
-                        else None
+                        {"MILES_SOAK_EVENT_LOG": str(event_log.path)} if wait_for_terminal_readiness else None
                     ),
                 ),
                 accept_replaced=False,

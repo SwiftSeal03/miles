@@ -112,11 +112,17 @@ class TestTrainingLifecycle:
     ) -> None:
         """Cleanup follows observed readiness, while training and cleanup failures stay fatal."""
         args = Namespace(
-            cluster_backend="ray", fully_async=True, save_debug_event_data=str(tmp_path / "training"),
-            trainer_heartbeat_checker_first_wait=300.0, trainer_heartbeat_checker_interval=10.0,
-            trainer_heartbeat_checker_timeout=10.0, trainer_heartbeat_checker_failure_threshold=3,
-            rollout_health_check_first_wait=0.0, rollout_health_check_interval=30.0,
-            rollout_health_check_timeout=10.0, rollout_health_check_failure_threshold=3,
+            cluster_backend="ray",
+            fully_async=True,
+            save_debug_event_data=str(tmp_path / "training"),
+            trainer_heartbeat_checker_first_wait=300.0,
+            trainer_heartbeat_checker_interval=10.0,
+            trainer_heartbeat_checker_timeout=10.0,
+            trainer_heartbeat_checker_failure_threshold=3,
+            rollout_health_check_first_wait=0.0,
+            rollout_health_check_interval=30.0,
+            rollout_health_check_timeout=10.0,
+            rollout_health_check_failure_threshold=3,
         )
         assert _terminal_timeout(args) >= 2 * args.trainer_heartbeat_checker_first_wait + 60
         log = EventLog(tmp_path / "events.jsonl")
