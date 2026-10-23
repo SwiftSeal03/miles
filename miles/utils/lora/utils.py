@@ -49,8 +49,10 @@ def lora_colocated_engine_keeps_base(args: Namespace) -> bool:
 
 def lora_sync_sends_base(args: Namespace) -> bool:
     """A colocated LoRA weight sync re-sends the frozen base unless the engines keep it; the
-    weight checker always rewrites every tensor."""
-    return args.check_weight_update_equal or not lora_colocated_engine_keeps_base(args)
+    weight checker always rewrites every tensor, and --lora-train-only syncs as full weights."""
+    return (
+        not lora_rollout_enabled(args) or args.check_weight_update_equal or not lora_colocated_engine_keeps_base(args)
+    )
 
 
 def save_adapter_to_disk(out_dir, config: dict, tensors: dict) -> None:
