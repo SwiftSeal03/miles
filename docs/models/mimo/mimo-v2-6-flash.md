@@ -64,14 +64,16 @@ On two 8×H200 nodes with node-local NVMe (4-drive RAID0), a step with 16 sample
 
 `scripts/run_mimo_v2_6_flash_tinker.py` serves [multi-LoRA training](/advanced/lora#multi-lora-training) on the same BF16 conversion: `prepare` converts the checkpoint and `serve` starts the gateway, which clients drive as in the [gateway example](/examples/multi-lora). The adapters cover q/k/v/o, the MLP (dense layer 0 and the routed experts) and `lm_head`.
 
-Multi-LoRA keeps every adapter's gradients on the training GPUs between calls, so training and sampling use separate GPUs, with PP 1 and no offload. The default layout trains on TP4 × EP16 (16 GPUs) next to one TP8 engine, 24 GPUs over three nodes, for 4 adapters of rank 32:
+Multi-LoRA keeps every adapter's gradients on the training GPUs between calls, so training and sampling use separate GPUs, with PP 1 and no offload. The full-model layout trains on TP4 × EP8 (8 GPUs) next to four TP2 engines that serve the official FP8/MXFP4 checkpoint `prepare` downloads, 16 GPUs over two nodes:
 
 ```bash
 MILES_SCRIPT_EXTERNAL_RAY=1 MASTER_ADDR=<head ip> python scripts/run_mimo_v2_6_flash_tinker.py serve \
-    --model-name MiMo-V2.6-Flash-RL-bf16 --num-nodes 3
+    --model-name MiMo-V2.6-Flash-RL-bf16 --num-nodes 2 --output-dir <directory both nodes can read>
 ```
 
-`--actor-num-gpus 8 --expert-model-parallel-size 8` fits the base on 8 training GPUs, but the expert adapters then leave room for only about `n_adapters × lora_rank ≤ 64` (an estimate, not measured). Sampling also needs SGLang LoRA support for MiMo-V2 (per-layer qkv widths, the 128-dim value head, the dense first layer, and skipping the vision/audio towers) from [sgl-project/sglang#45939](https://github.com/sgl-project/sglang/pull/45939), which is not in `sglang-miles` yet.
+The trainer saves each sampler adapter under `--output-dir` and the engines on the other node load it from there, so the directory must be on storage both nodes share.
+
+With 4 adapters of rank 16, an 8 × 4096-token `forward_backward` peaks at about 130 GB per training GPU on H200; `--actor-num-gpus 16 --expert-model-parallel-size 16 --lora-rank 32` trains 4 adapters of rank 32 on three nodes. Adapters reach the engines from disk and the base is never synced, so the engines can serve the quantized checkpoint while the trainer holds the BF16 conversion. Sampling also needs SGLang LoRA support for MiMo-V2 (per-layer qkv widths, the 128-dim value head, the dense first layer, skipping the vision/audio towers, and expert LoRA on the Marlin MXFP4 experts) from [sgl-project/sglang#45939](https://github.com/sgl-project/sglang/pull/45939), which is not in `sglang-miles` yet.
 
 ## 5. Recipe Configuration
 

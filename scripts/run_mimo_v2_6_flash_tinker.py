@@ -6,26 +6,28 @@ attention, the MLP (dense layer 0 and the routed experts) and the output head of
 scripts/run_mimo_v2_6_flash.py trains in full; `prepare` runs the same conversion.
 
 Multi-LoRA keeps every adapter's accumulated gradients on the training GPUs between calls, so training and
-sampling use separate GPUs, with PP 1, no offload, and the whole BF16 base resident on both sides:
-  mimo26-p4-bf16           4 training GPUs (TP4, EP4) + one TP4 engine: one 8-GPU node
-  MiMo-V2.6-Flash-RL-bf16  16 training GPUs (TP4, EP16) + one TP8 engine: three 8-GPU nodes. The base alone
-                           takes 8 training GPUs (EP8), where the expert adapters of 4 slots at rank 32 no
-                           longer fit; EP8 leaves room for roughly n_adapters * lora_rank <= 64.
+sampling use separate GPUs, with PP 1 and no offload:
+  mimo26-p4-bf16           4 training GPUs (TP4, EP4) + one TP4 engine on the BF16 base: one 8-GPU node
+  MiMo-V2.6-Flash-RL-bf16  8 training GPUs (TP4, EP8) + four TP2 engines on the official FP8/MXFP4 checkpoint
+                           that `prepare` downloads: two 8-GPU nodes. With 4 slots at rank 16, an 8x4096-token
+                           forward_backward peaks at about 130 GB per training GPU; 4 slots at rank 32 need
+                           --actor-num-gpus 16 --expert-model-parallel-size 16 (three nodes).
 Sampling also needs SGLang LoRA support for MiMo-V2: per-layer qkv widths, a value head narrower than the key
-head, the dense first layer, and skipping the vision/audio towers.
+head, the dense first layer, skipping the vision/audio towers, and expert LoRA on the Marlin MXFP4 experts.
 
 Args:
   --model-name: checkpoint directory under `--model-dir`; selects the layout above.
   --actor-num-gpus, --tensor-model-parallel-size, --expert-model-parallel-size: training GPUs and their TP and
       EP; None takes the layout of --model-name. TP must not exceed 4, the global-attention KV head count.
   --n-adapters, --lora-rank, --lora-alpha: adapter slots, their maximum rank (each client picks a rank up to
-      it), and the LoRA alpha shared by every slot.
+      it; None takes the layout of --model-name), and the LoRA alpha shared by every slot.
   --target-modules: LoRA groups among attn, mlp and unembed; clients must request the same groups.
   --tinker-port: port of the Tinker API on the head node.
   --extra-args: appended verbatim to the serve_tinker.py argv.
 
-The full model spans three nodes: start the ray head on the first, join the others, and run with
-`MILES_SCRIPT_EXTERNAL_RAY=1 MASTER_ADDR=<head ip> --num-nodes 3`.
+The full model spans two nodes: start the ray head on the first, join the other, and run with
+`MILES_SCRIPT_EXTERNAL_RAY=1 MASTER_ADDR=<head ip> --num-nodes 2`. The trainer saves sampler adapters under
+`--output-dir` and the engines on the other node load them from there, so it must be storage both nodes read.
 
 Examples:
   python scripts/run_mimo_v2_6_flash_tinker.py prepare
@@ -36,7 +38,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import typer
-from scripts.run_mimo_v2_6_flash import _RECIPES, _prepare_checkpoint
+from scripts.run_mimo_v2_6_flash import _RECIPES, _official_checkpoint, _prepare_checkpoint
 
 import miles.utils.external_utils.command_utils as U
 
@@ -48,12 +50,49 @@ class _Layout:
     actor_num_gpus: int
     tensor_model_parallel_size: int
     expert_model_parallel_size: int
+    lora_rank: int
+    rollout_num_gpus: int
+    rollout_num_gpus_per_engine: int
+    sglang_mem_fraction_static: float
+    # The engines serve the official FP8/MXFP4 checkpoint instead of the trainer's BF16 conversion.
+    official_engine: bool
 
 
 _LAYOUTS = {
-    "MiMo-V2.6-Flash-RL-bf16": _Layout(actor_num_gpus=16, tensor_model_parallel_size=4, expert_model_parallel_size=16),
-    "mimo26-p4-bf16": _Layout(actor_num_gpus=4, tensor_model_parallel_size=4, expert_model_parallel_size=4),
+    "MiMo-V2.6-Flash-RL-bf16": _Layout(
+        actor_num_gpus=8,
+        tensor_model_parallel_size=4,
+        expert_model_parallel_size=8,
+        lora_rank=16,
+        rollout_num_gpus=8,
+        rollout_num_gpus_per_engine=2,
+        # weights take 82 GB per GPU and 4 rank-16 LoRA slots another 23 GB, leaving ~13 GB of KV cache
+        sglang_mem_fraction_static=0.85,
+        official_engine=True,
+    ),
+    "mimo26-p4-bf16": _Layout(
+        actor_num_gpus=4,
+        tensor_model_parallel_size=4,
+        expert_model_parallel_size=4,
+        lora_rank=32,
+        rollout_num_gpus=4,
+        rollout_num_gpus_per_engine=4,
+        sglang_mem_fraction_static=0.6,
+        official_engine=False,
+    ),
 }
+
+
+def _engine_config(model_path: str, num_gpus: int) -> str:
+    """`--sglang-config` serving `model_path` on every rollout GPU, in engines of --rollout-num-gpus-per-engine."""
+    return (
+        "sglang:\n"
+        "  - name: default\n"
+        f"    model_path: {model_path}\n"
+        "    server_groups:\n"
+        "      - worker_type: regular\n"
+        f"        num_gpus: {num_gpus}\n"
+    )
 
 
 @dataclass
@@ -66,7 +105,7 @@ class ScriptArgs(U.ExecuteTrainConfig):
     tensor_model_parallel_size: int | None = None
     expert_model_parallel_size: int | None = None
     n_adapters: int = 4
-    lora_rank: int = 32
+    lora_rank: int | None = None
     lora_alpha: int = 64
     target_modules: str = "attn,mlp,unembed"
     tinker_port: int = 10613
@@ -80,6 +119,7 @@ class ScriptArgs(U.ExecuteTrainConfig):
         self.actor_num_gpus = self.actor_num_gpus or layout.actor_num_gpus
         self.tensor_model_parallel_size = self.tensor_model_parallel_size or layout.tensor_model_parallel_size
         self.expert_model_parallel_size = self.expert_model_parallel_size or layout.expert_model_parallel_size
+        self.lora_rank = self.lora_rank or layout.lora_rank
 
     @property
     def actor_num_nodes(self) -> int:
@@ -100,6 +140,7 @@ def prepare(args: ScriptArgs):
 def serve(args: ScriptArgs):
     """Serve the Tinker gateway (idles until clients connect)."""
     recipe = _RECIPES[args.model_name]
+    layout = _LAYOUTS[args.model_name]
     tp = args.tensor_model_parallel_size
 
     ckpt_args = f"--hf-checkpoint {args.model_dir}/{args.model_name} --megatron-to-hf-mode bridge "
@@ -130,14 +171,16 @@ def serve(args: ScriptArgs):
         "--recompute-granularity full --recompute-method uniform --recompute-num-layers 1 "
     )
 
-    # one engine holding the whole BF16 base
     sglang_args = (
-        f"--rollout-num-gpus {recipe.rollout_num_gpus_per_engine} "
-        f"--rollout-num-gpus-per-engine {recipe.rollout_num_gpus_per_engine} "
+        f"--rollout-num-gpus {layout.rollout_num_gpus} "
+        f"--rollout-num-gpus-per-engine {layout.rollout_num_gpus_per_engine} "
         "--sglang-dtype bfloat16 "
-        f"--sglang-mem-fraction-static {recipe.sglang_mem_fraction_static} "
+        f"--sglang-mem-fraction-static {layout.sglang_mem_fraction_static} "
         "--sglang-lora-backend triton "
     )
+    if layout.official_engine:
+        engine_config = _engine_config(_official_checkpoint(args.model_dir), layout.rollout_num_gpus)
+        sglang_args += f"--sglang-config {U.encode_pseudo_file(engine_config)} "
 
     misc_args = (
         "--attention-dropout 0.0 "

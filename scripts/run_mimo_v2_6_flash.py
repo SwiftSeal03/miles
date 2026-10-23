@@ -124,13 +124,18 @@ def prepare(args: ScriptArgs):
         backend.hf_download_dataset("zhuzilin/dapo-math-17k", data_dir=args.data_dir)
 
 
+def _official_checkpoint(model_dir: str) -> str:
+    """Where `prepare` downloads the official FP8/MXFP4 checkpoint that it converts."""
+    return f"{model_dir}/{_HF_REPO.split('/')[1]}"
+
+
 def _prepare_checkpoint(backend, *, model_dir: str, model_name: str):
     """Convert the official checkpoint into `<model_dir>/<model_name>` unless that conversion finished."""
     target = Path(model_dir) / model_name
     with U.exclusive_path_lock(str(target)):
         # The converter writes the index last, so it marks a finished conversion.
         if not (target / "model.safetensors.index.json").exists():
-            source = f"{model_dir}/{_HF_REPO.split('/')[1]}"
+            source = _official_checkpoint(model_dir)
             layers = _RECIPES[model_name].layers
             layer_args = f"--layers {layers}" if layers else ""
             backend.exec_command_cpu(f"mkdir -p {model_dir}")
