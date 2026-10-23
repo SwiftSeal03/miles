@@ -113,6 +113,7 @@ class TestOneRunIdentityAcrossTheScenario:
         assert soak["dump_dir"] == dump_dir
         assert soak["evidence_dir"].parent == dump_dir.with_name(f"{dump_dir.name}-soak")
         assert soak["event_log"].path == soak["evidence_dir"] / "events.jsonl"
+        assert launch.request.extra_env_vars["MILES_SOAK_EVENT_LOG"] == str(soak["event_log"].path)
         assert Path(launch.value_of("--save-debug-event-data")).parent == dump_dir
 
     def test_a_trigger_subset_gets_a_dump_directory_of_its_own(self, harness: ScenarioHarness) -> None:
@@ -168,7 +169,7 @@ class TestTheLaunchedTrainArguments:
         assert launch.value_of("--update-weight-transfer-mode") == "p2p"
         assert "--sglang-remote-instance-weight-loader-start-seed-via-transfer-engine" in launch.argv
         assert launch.value_of("--num-rollout") == "9"
-        assert launch.request.train_script.endswith("/train.py")
+        assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
         assert "--dumper-fwd-bwd" in launch.argv
 
     def test_the_launch_carries_the_shared_eager_deterministic_environment(self, harness: ScenarioHarness) -> None:
@@ -208,7 +209,7 @@ class TestTheLaunchedTrainArguments:
 
         (launch,) = harness.launches
         (soak,) = harness.soaks
-        assert launch.request.train_script.endswith("/train_async.py")
+        assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
         assert "--fully-async" in launch.argv
         assert launch.value_of("--pause-generation-mode") == "in_place"
         assert soak["dump_dir"].name == f"random_crash_fully_async_{_MIXED_MODE}"
@@ -221,7 +222,7 @@ class TestTheLaunchedTrainArguments:
 
         (launch,) = harness.launches
         (soak,) = harness.soaks
-        assert launch.request.train_script.endswith("/train_async.py")
+        assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
         assert set(soak["runner_config"].target_configs) == {ACTOR_CELL_TYPE, ROLLOUT_CELL_TYPE}
         assert MODES[fully_async_entry._MODE].has_real_rollout
         assert not any(arg.startswith("--dumper-") for arg in launch.argv)

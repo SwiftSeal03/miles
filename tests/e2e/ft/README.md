@@ -446,6 +446,8 @@ Assertions:
 
 ### `scenario_random_crash`
 
+- **Ray teardown readiness**: the test-only `tests/utils/soak/ft/training.py` calls the original sync or async training function. After training returns, it resumes health checks once and waits up to 60 seconds for the outer soak runner to record a fresh, complete, ready observation after fault admission closes and all requested actions finish. It then runs the original cleanup. Recovery, tail, and latest-state assertions remain unchanged; Kubernetes keeps its existing entry point.
+
 ```
 Type: soak (no baseline, no compare); passes if training completes without hanging and the
       witnesses hold
