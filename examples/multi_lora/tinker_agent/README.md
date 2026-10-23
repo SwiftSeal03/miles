@@ -111,6 +111,9 @@ Run it against the gateway:
 python agent_rl.py --base-url http://<gateway-host>:10613 --base-model /root/models/Qwen3-30B-A3B
 ```
 
+For a full recipe that runs Harbor tasks in sandboxes and trains with the
+cookbook's RL loop, see [Harbor recipe](../harbor_tinker/README.md).
+
 ## How it works
 
 1. **Capture.** `capture_to_store(run_id, data_dir=...)` starts a local capture
