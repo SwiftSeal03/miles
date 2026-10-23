@@ -24,7 +24,7 @@ import tinker
 from tinker import types
 
 register_cuda_ci(
-    est_time=1800,
+    est_time=500,
     suite="stage-c-8-gpu-h100",
     labels=["multi-lora"],
     hardware=["hopper"],
