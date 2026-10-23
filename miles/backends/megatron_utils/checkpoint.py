@@ -17,6 +17,7 @@ from megatron.training.checkpointing import load_checkpoint as _load_checkpoint_
 from megatron.training.checkpointing import save_checkpoint
 from megatron.training.global_vars import get_args
 
+from miles.backends.megatron_utils.megatron_config import has_hf_checkpoint
 from miles.backends.training_utils.model_companion import (
     ModelCompanionInstallationUtils,
     ModelCompanionSampleConsumptionUtils,
@@ -25,7 +26,7 @@ from miles.backends.training_utils.weight_update.snapshot_publisher import Snaps
 from miles.utils import megatron_bridge_utils
 from miles_plugins.models.deepseek_v4.arguments import assert_checkpoint_is_current, is_dsv4_model
 
-from .lora.utils import is_lora_enabled, is_lora_model, load_lora_adapter, save_lora_checkpoint
+from .lora.utils import is_lora_model, save_lora_checkpoint
 from .model_provider import LinearForLastLayer
 
 try:
@@ -114,7 +115,6 @@ __all__ = ["save_checkpoint", "save_checkpoint_with_lora", "load_checkpoint"]
 class _CheckpointLoadResult(NamedTuple):
     iteration: int
     restored_trained_iteration: bool
-    native_optimizer_restored: bool
 
 
 def load_checkpoint(
@@ -128,6 +128,7 @@ def load_checkpoint(
     args = get_args()
 
     load_path = args.load
+    ckpt_step = args.ckpt_step
 
     has_local_checkpoint_manager = "local_checkpoint_manager" in (checkpointing_context or {})
     if has_local_checkpoint_manager:
@@ -137,11 +138,14 @@ def load_checkpoint(
             load_path
         ), f"{args.load=} does not exist or is an empty directory. Did you specify the wrong folder?"
 
-    if has_local_checkpoint_manager or _is_megatron_checkpoint(load_path):
+    if has_local_checkpoint_manager or ckpt_step is not None or _is_megatron_checkpoint(load_path):
+        checkpoint_path = (
+            get_checkpoint_name(load_path, ckpt_step, return_base_dir=True) if ckpt_step is not None else load_path
+        )
         if not has_local_checkpoint_manager and is_dsv4_model(args):
-            assert_checkpoint_is_current(load_path)
+            assert_checkpoint_is_current(checkpoint_path)
         if not has_local_checkpoint_manager and _has_linear_attention(ddp_model):
-            assert_linear_attn_checkpoint_is_current(load_path)
+            assert_linear_attn_checkpoint_is_current(checkpoint_path)
         result_iteration, _ = _load_checkpoint_megatron(
             ddp_model=ddp_model,
             optimizer=optimizer,
@@ -149,7 +153,11 @@ def load_checkpoint(
             checkpointing_context=checkpointing_context,
             skip_load_to_model_and_opt=skip_load_to_model_and_opt,
         )
+        if ckpt_step is not None and not args.finetune and result_iteration != ckpt_step:
+            raise ValueError(f"Requested checkpoint step {ckpt_step}, but Megatron loaded step {result_iteration}")
     else:
+        if args.exit_on_missing_checkpoint and not has_hf_checkpoint(load_path):
+            raise FileNotFoundError(f"No checkpoint found under --load={load_path!r}")
         result_iteration, _ = _load_checkpoint_hf(
             ddp_model=ddp_model,
             optimizer=optimizer,
@@ -158,37 +166,9 @@ def load_checkpoint(
         )
     restored_trained_iteration = not args.finetune
 
-    # Load LoRA adapter weights if available
-    native_optimizer_restored = False
-    if is_lora_enabled(args):
-        adapter_path = getattr(args, "lora_adapter_path", None)
-        if adapter_path is not None:
-            loaded, adapter_iteration, native_optimizer_restored = load_lora_adapter(
-                ddp_model,
-                adapter_path,
-                optimizer=optimizer,
-                opt_param_scheduler=opt_param_scheduler,
-                load_optimizer=not args.no_load_optim,
-            )
-            if loaded:
-                logger.info(f"Successfully loaded LoRA adapter from {adapter_path}")
-                if adapter_iteration is not None:
-                    result_iteration = adapter_iteration
-                    restored_trained_iteration = True
-            else:
-                logger.warning(
-                    f"LoRA is enabled and --lora-adapter-path={adapter_path} was specified, "
-                    f"but adapter weights could not be loaded. "
-                    f"Training will start with freshly initialized adapter weights."
-                )
-
     ModelCompanionSampleConsumptionUtils.clear_for_finetune(ddp_model, args=args)
 
-    return _CheckpointLoadResult(
-        iteration=result_iteration,
-        restored_trained_iteration=restored_trained_iteration,
-        native_optimizer_restored=native_optimizer_restored,
-    )
+    return _CheckpointLoadResult(iteration=result_iteration, restored_trained_iteration=restored_trained_iteration)
 
 
 def save_checkpoint_with_lora(
