@@ -225,7 +225,8 @@ class TestTheLaunchedTrainArguments:
         assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
         assert set(soak["runner_config"].target_configs) == {ACTOR_CELL_TYPE, ROLLOUT_CELL_TYPE}
         assert MODES[fully_async_entry._MODE].has_real_rollout
-        assert not any(arg.startswith("--dumper-") for arg in launch.argv)
+        assert "--dumper-fwd-bwd" in launch.argv
+        assert "--dumper-dir" in launch.argv
         assert "--save-debug-event-data" in launch.argv
         assert "--enable-event-analyzer" in launch.argv
         assert "--enable-witness" in launch.argv

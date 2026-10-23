@@ -7,7 +7,6 @@ from pathlib import Path
 
 import typer
 from tests.e2e.ft.conftest_ft.cli_options import (
-    EnableDumperOption,
     FaultTriggersOption,
     FullyAsyncOption,
     ModeOption,
@@ -65,7 +64,6 @@ def run_ci(
     rollout_crash_interval_seconds: RolloutCrashIntervalSecondsOption = DEFAULT_ROLLOUT_CRASH_INTERVAL_SECONDS,
     fully_async: FullyAsyncOption = False,
     requested_triggers: FaultTriggersOption = None,
-    enable_dumper: EnableDumperOption = True,
 ) -> None:
     """Random failure soak test, for whichever components the mode enables ft on.
 
@@ -109,7 +107,6 @@ def run_ci(
         dump_dir=dump_dir,
         num_steps=num_steps,
         fully_async=fully_async,
-        enable_dumper=enable_dumper,
     ) + fault_triggers.compute_hook_train_args(triggers)
 
     injector = _run_soak(
@@ -144,7 +141,6 @@ def _build_train_args(
     dump_dir: str,
     num_steps: int,
     fully_async: bool,
-    enable_dumper: bool,
 ) -> str:
     debug_rollout_data_dir = None if ft_mode.has_real_rollout else materialize_cyclic_debug_rollout_data(num_steps)
     train_args = (
@@ -153,8 +149,7 @@ def _build_train_args(
             dump_dir=dump_dir,
             num_steps=num_steps,
             debug_rollout_data_dir=debug_rollout_data_dir,
-            enable_dumper=enable_dumper,
-        )
+            )
         + get_ft_args(
             ft_mode, api_server_args=API_SERVER_ARGS, extra_ft_components=_compute_extra_ft_components(ft_mode)
         )
