@@ -205,7 +205,8 @@ class TestTheLaunchedTrainArguments:
 
         (launch,) = harness.launches
         (soak,) = harness.soaks
-        assert launch.request.train_script.endswith("/train_async.py")
+        assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
+        assert launch.request.extra_env_vars["MILES_SOAK_EVENT_LOG"] == str(soak["event_log"].path)
         assert "--fully-async" in launch.argv
         assert launch.value_of("--pause-generation-mode") == "in_place"
         assert soak["dump_dir"].name == f"random_crash_fully_async_{_MIXED_MODE}"
@@ -218,7 +219,8 @@ class TestTheLaunchedTrainArguments:
 
         (launch,) = harness.launches
         (soak,) = harness.soaks
-        assert launch.request.train_script.endswith("/train_async.py")
+        assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
+        assert launch.request.extra_env_vars["MILES_SOAK_EVENT_LOG"] == str(soak["event_log"].path)
         assert set(soak["runner_config"].target_configs) == {ACTOR_CELL_TYPE, ROLLOUT_CELL_TYPE}
         assert MODES[fully_async_entry._MODE].has_real_rollout
 
