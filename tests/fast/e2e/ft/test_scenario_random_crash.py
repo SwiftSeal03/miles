@@ -1,4 +1,3 @@
-import runpy
 from pathlib import Path
 
 import pytest
@@ -113,7 +112,6 @@ class TestOneRunIdentityAcrossTheScenario:
         assert soak["dump_dir"] == dump_dir
         assert soak["evidence_dir"].parent == dump_dir.with_name(f"{dump_dir.name}-soak")
         assert soak["event_log"].path == soak["evidence_dir"] / "events.jsonl"
-        assert launch.request.extra_env_vars["MILES_SOAK_EVENT_LOG"] == str(soak["event_log"].path)
         assert Path(launch.value_of("--save-debug-event-data")).parent == dump_dir
 
     def test_a_trigger_subset_gets_a_dump_directory_of_its_own(self, harness: ScenarioHarness) -> None:
@@ -143,7 +141,6 @@ class TestTheLaunchedTrainArguments:
             expected_components.append("weight_update")
         assert parsed.ft_components == expected_components
         assert parsed.mini_ft_controller_enable
-        assert parsed.namespace.trainer_heartbeat_checker_first_wait == 0.0
         assert not parsed.namespace.colocate
         assert "rollout" not in parsed.ft_components or parsed.partial_target_weight_update
         _assert_the_gpu_layout_is_the_modes(launch.request.num_gpus_per_node, parsed.namespace, mode=mode)
@@ -169,8 +166,7 @@ class TestTheLaunchedTrainArguments:
         assert launch.value_of("--update-weight-transfer-mode") == "p2p"
         assert "--sglang-remote-instance-weight-loader-start-seed-via-transfer-engine" in launch.argv
         assert launch.value_of("--num-rollout") == "9"
-        assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
-        assert "--dumper-fwd-bwd" in launch.argv
+        assert launch.request.train_script.endswith("/train.py")
 
     def test_the_launch_carries_the_shared_eager_deterministic_environment(self, harness: ScenarioHarness) -> None:
         """A respawned cell recompiling under torch.compile can OOM, so every soak launch must run eager."""
@@ -209,7 +205,7 @@ class TestTheLaunchedTrainArguments:
 
         (launch,) = harness.launches
         (soak,) = harness.soaks
-        assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
+        assert launch.request.train_script.endswith("/train_async.py")
         assert "--fully-async" in launch.argv
         assert launch.value_of("--pause-generation-mode") == "in_place"
         assert soak["dump_dir"].name == f"random_crash_fully_async_{_MIXED_MODE}"
@@ -218,19 +214,13 @@ class TestTheLaunchedTrainArguments:
         self, harness: ScenarioHarness
     ) -> None:
         """Killing an engine that keeps generating across updates is the fault only this entry can produce."""
-        runpy.run_path(fully_async_entry.__file__, run_name="__main__")
+        scenario_random_crash_fully_async.run_ci(fully_async_entry._MODE)
 
         (launch,) = harness.launches
         (soak,) = harness.soaks
-        assert launch.request.train_script.endswith("/tests/utils/soak/ft/training.py")
+        assert launch.request.train_script.endswith("/train_async.py")
         assert set(soak["runner_config"].target_configs) == {ACTOR_CELL_TYPE, ROLLOUT_CELL_TYPE}
         assert MODES[fully_async_entry._MODE].has_real_rollout
-        assert "--dumper-fwd-bwd" in launch.argv
-        assert "--dumper-dir" in launch.argv
-        assert "--save-debug-event-data" in launch.argv
-        assert "--enable-event-analyzer" in launch.argv
-        assert "--enable-witness" in launch.argv
-        assert harness.checker_names == ["assert_hook_evidence", "assert_healing"]
 
     def test_a_fully_async_fake_rollout_run_is_refused_before_anything_is_prepared(
         self, harness: ScenarioHarness

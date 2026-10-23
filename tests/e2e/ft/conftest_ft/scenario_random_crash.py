@@ -43,7 +43,6 @@ from tests.utils.soak.ft.entrypoint import run_cell_soak
 from tests.utils.soak.ft.types import ACTOR_CELL_TYPE, ROLLOUT_CELL_TYPE, FaultTrigger
 
 from miles.utils.external_utils import command_utils
-from miles.utils.workers.types import ClusterBackend
 
 app: typer.Typer = typer.Typer()
 
@@ -142,7 +141,7 @@ def _build_train_args(
             ft_mode, api_server_args=API_SERVER_ARGS, extra_ft_components=_compute_extra_ft_components(ft_mode)
         )
         + get_fully_async_args(fully_async=fully_async)
-        + "--mini-ft-controller-enable --trainer-heartbeat-checker-first-wait 0 "
+        + "--mini-ft-controller-enable "
     )
     if ft_mode.has_real_rollout:
         train_args += "--update-weight-transfer-mode p2p "
@@ -185,16 +184,7 @@ def _run_soak(
                     train_args=train_args,
                     mode=ft_mode,
                     config=config,
-                    train_script=(
-                        "tests/utils/soak/ft/training.py"
-                        if config.cluster_backend is ClusterBackend.RAY
-                        else get_train_script(fully_async=fully_async)
-                    ),
-                    extra_env_vars=(
-                        {"MILES_SOAK_EVENT_LOG": str(event_log.path)}
-                        if config.cluster_backend is ClusterBackend.RAY
-                        else None
-                    ),
+                    train_script=get_train_script(fully_async=fully_async),
                 ),
                 accept_replaced=False,
             ),

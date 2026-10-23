@@ -446,8 +446,6 @@ Assertions:
 
 ### `scenario_random_crash`
 
-- **Ray teardown readiness**: the test-only `tests/utils/soak/ft/training.py` calls the original sync or async training function. After training returns, it resumes health checks once and waits up to 60 seconds for the outer soak runner to record a fresh, complete, ready observation after fault admission closes and all requested actions finish. It then runs the original cleanup. Recovery, tail, and latest-state assertions remain unchanged; Kubernetes keeps its existing entry point.
-
 ```
 Type: soak (no baseline, no compare); passes if training completes without hanging and the
       witnesses hold
@@ -515,7 +513,6 @@ Faults are random, so beyond the witnesses no exact sequence is asserted.
 - **Why quiescence counts replicas against `SoakTargetConfig.expected_count`**: a deleted pod vanishes from the listing rather than reading unhealthy, and the survivors all read healthy; only the missing replica says the kind is still recovering.
 - **Why every enabled form has to land**: the floors count injections, not forms, so `inject_fault:kill_process` alone could clear them while `delete_pod` is never tried. This witness makes the draw's preference for an untried form binding.
 - **Why every injection recovers on its own cell**: a floor of ">= 2 healings" passes whenever the last crash never recovered. The default intervals are short enough that a soak reliably clears the floors.
-- **Trainer heartbeat grace in random_crash**: this eager-mode soak sets `--trainer-heartbeat-checker-first-wait 0`, so a healed incarnation can establish Healthy before the finite recovery tail ends. Actor initialization completes before its checker starts, and cooperative reconfiguration pauses the checkers. Production defaults, probe timeout, failure debounce, quiescence and every recovery assertion are unchanged.
 - **Why the step budget is 60**: a rollout injection needs a 60-poll (~120s) quiescent streak plus a mean-240s exponential wait, so the second accepted rollout injection the witness demands takes well over ten minutes. The budget buys that time instead of lowering the quiescence gate that keeps the injector from killing a kind's last live replica.
 - **Why the rollout witness is one-sided**: sampled polls miss windows by construction, so it never demands seeing the down half of a recovery. It demands a new incarnation of the cell observed Serving after the fault applied; a stale Healthy reading of the old incarnation cannot satisfy it.
 - **Evidence**: typed events in `<dump_dir>-soak/<session_id>/events.jsonl`, requests flushed before dispatch; after teardown the training-event logs, discarded generations included, are copied under `sources/` with SHA-256 digests, and the checks read those copies.
