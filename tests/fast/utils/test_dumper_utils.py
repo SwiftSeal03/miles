@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import torch
+from tests.fast.dist_utils import run_multiprocess
+from tests.fast.utils.dumper_barrier_worker import run_missing_dump_peer
 
 from miles.backends.training_utils.model_companion import ModelCompanion
 from miles.utils import dumper_utils
@@ -315,9 +317,13 @@ class TestDumperMegatronUtilFinalize:
 
 
 class TestBarrierAfterDumpDirCleanup:
+    def test_a_missing_peer_times_out_without_blocking_heartbeat_or_other_communication(self) -> None:
+        """A missing dump participant must not strand a survivor or starve its heartbeat thread."""
+        run_multiprocess(run_missing_dump_peer)
+
     @staticmethod
     def _run(group: MagicMock) -> None:
-        state = SimpleNamespace(indep_dp=SimpleNamespace(rank=1, size=2, group=group, debug_info={"quorum": 7}))
+        state = SimpleNamespace(indep_dp=SimpleNamespace(rank=1, size=2, group=MagicMock(), gloo_group=group, debug_info={"quorum": 7}))
         with (
             patch("miles.utils.dumper_utils.get_parallel_state", return_value=state),
             patch("miles.utils.dumper_utils.dist") as mock_dist,
@@ -353,7 +359,7 @@ class TestBarrierAfterDumpDirCleanup:
         """A peer death aborts the cross-cell PG mid-barrier; the survivor continues instead of erroring."""
         group = MagicMock()
         group.barrier.side_effect = RuntimeError("NCCL communicator was aborted on rank 1")
-        state = SimpleNamespace(indep_dp=SimpleNamespace(rank=1, size=2, group=group, debug_info={"quorum": 0}))
+        state = SimpleNamespace(indep_dp=SimpleNamespace(rank=1, size=2, group=MagicMock(), gloo_group=group, debug_info={"quorum": 0}))
 
         with (
             patch("miles.utils.dumper_utils.get_parallel_state", return_value=state),
