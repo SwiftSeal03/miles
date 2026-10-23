@@ -158,7 +158,7 @@ def _build_train_args(
             ft_mode, api_server_args=API_SERVER_ARGS, extra_ft_components=_compute_extra_ft_components(ft_mode)
         )
         + get_fully_async_args(fully_async=fully_async)
-        + "--mini-ft-controller-enable "
+        + "--mini-ft-controller-enable --trainer-heartbeat-checker-first-wait 0 "
     )
     if ft_mode.has_real_rollout:
         train_args += "--update-weight-transfer-mode p2p "

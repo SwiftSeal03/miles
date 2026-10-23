@@ -142,6 +142,7 @@ class TestTheLaunchedTrainArguments:
             expected_components.append("weight_update")
         assert parsed.ft_components == expected_components
         assert parsed.mini_ft_controller_enable
+        assert parsed.namespace.trainer_heartbeat_checker_first_wait == 0.0
         assert not parsed.namespace.colocate
         assert "rollout" not in parsed.ft_components or parsed.partial_target_weight_update
         _assert_the_gpu_layout_is_the_modes(launch.request.num_gpus_per_node, parsed.namespace, mode=mode)
