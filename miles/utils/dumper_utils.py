@@ -313,7 +313,6 @@ def _barrier_after_dump_dir_cleanup() -> None:
 
     indep_dp = get_parallel_state().indep_dp
     if indep_dp.group is not None:
-        assert indep_dp.gloo_group is not None, "Cross-cell dump cleanup requires a Gloo process group"
         log_structured(
             logger.info,
             tag="ft",
@@ -325,7 +324,7 @@ def _barrier_after_dump_dir_cleanup() -> None:
             **indep_dp.debug_info,
         )
         try:
-            GeneralPGUtil.create(indep_dp.gloo_group).barrier(indep_dp.gloo_group)
+            GeneralPGUtil.create(indep_dp.group).barrier(indep_dp.group)
             log_structured(
                 logger.info,
                 tag="ft",

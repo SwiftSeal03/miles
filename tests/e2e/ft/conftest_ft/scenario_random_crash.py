@@ -102,11 +102,7 @@ def run_ci(
 
     prepare(ft_mode, config=config)
     train_args = _build_train_args(
-        ft_mode,
-        config=config,
-        dump_dir=dump_dir,
-        num_steps=num_steps,
-        fully_async=fully_async,
+        ft_mode, config=config, dump_dir=dump_dir, num_steps=num_steps, fully_async=fully_async
     ) + fault_triggers.compute_hook_train_args(triggers)
 
     injector = _run_soak(
@@ -135,20 +131,12 @@ def run_ci(
 
 
 def _build_train_args(
-    ft_mode: FTTestMode,
-    *,
-    config: command_utils.ExecuteTrainConfig,
-    dump_dir: str,
-    num_steps: int,
-    fully_async: bool,
+    ft_mode: FTTestMode, *, config: command_utils.ExecuteTrainConfig, dump_dir: str, num_steps: int, fully_async: bool
 ) -> str:
     debug_rollout_data_dir = None if ft_mode.has_real_rollout else materialize_cyclic_debug_rollout_data(num_steps)
     train_args = (
         get_common_train_args(
-            ft_mode,
-            dump_dir=dump_dir,
-            num_steps=num_steps,
-            debug_rollout_data_dir=debug_rollout_data_dir,
+            ft_mode, dump_dir=dump_dir, num_steps=num_steps, debug_rollout_data_dir=debug_rollout_data_dir
         )
         + get_ft_args(
             ft_mode, api_server_args=API_SERVER_ARGS, extra_ft_components=_compute_extra_ft_components(ft_mode)
