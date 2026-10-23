@@ -216,7 +216,9 @@ class TrainRayActor(NodeProbeMixin):
 
     @rpc(concurrency_group="heartbeat_status")
     def get_heartbeat_status(self) -> HeartbeatStatus:
-        return self._heartbeat.status()
+        status = self._heartbeat.status()
+        logger.info("ft op=heartbeat phase=reply rank=%s bump_count=%s", self._rank, status.bump_count)
+        return status
 
     @rpc(concurrency_group="fault_injector")
     def control_fault_hook(self, command: FaultHookCommand) -> FaultHookRecord:
