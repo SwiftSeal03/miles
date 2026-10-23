@@ -31,9 +31,7 @@ class _TrainingHarness:
 
     async def _publish(self) -> None:
         now = datetime.now(timezone.utc)
-        self.log.append(
-            SoakObservationEvent(timestamp=now, completed_at=now, targets=[_cell_target(kind="rollout")])
-        )
+        self.log.append(SoakObservationEvent(timestamp=now, completed_at=now, targets=[_cell_target(kind="rollout")]))
         self.calls.append("observed_ready")
 
     async def dispose(self) -> None:

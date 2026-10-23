@@ -4,14 +4,15 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
-from tests.fast.utils.soak.soak_fakes import _cell_target
 from tests.fast.utils.soak.ft.training_fakes import _TrainingHarness
-from tests.utils.soak.ft import training
-from miles.utils.async_utils import with_disposer
-from miles.utils.function_registry import function_registry
+from tests.fast.utils.soak.soak_fakes import _cell_target
 from tests.utils.soak.core.event_log import EventLog
 from tests.utils.soak.core.events import SoakEvent, SoakObservationEvent, StoredEvent
+from tests.utils.soak.ft import training
 from tests.utils.soak.ft.training import _has_ready_observation, _wait_for_ready_observation
+
+from miles.utils.async_utils import with_disposer
+from miles.utils.function_registry import function_registry
 
 
 class TestTerminalReadiness:
@@ -104,14 +105,24 @@ class TestTrainingLifecycle:
     @pytest.mark.parametrize("fully_async", [False, True])
     @pytest.mark.parametrize("failure", [None, "train", "cleanup", "resume"])
     async def test_readiness_precedes_cleanup_and_failures_remain_failures(
-        self, events: list[SoakEvent], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-        fully_async: bool, failure: str | None,
+        self,
+        events: list[SoakEvent],
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        fully_async: bool,
+        failure: str | None,
     ) -> None:
         """Both drivers must observe readiness before cleanup and propagate unsuccessful execution."""
-        args = Namespace(cluster_backend="ray", fully_async=fully_async, save_debug_event_data=str(tmp_path / "training"))
+        args = Namespace(
+            cluster_backend="ray", fully_async=fully_async, save_debug_event_data=str(tmp_path / "training")
+        )
         log = EventLog(tmp_path / "events.jsonl")
         for index, event in enumerate(events):
-            log.append(event.model_copy(update={"sources": {"training_events": Path(args.save_debug_event_data)}}) if index == 0 else event)
+            log.append(
+                event.model_copy(update={"sources": {"training_events": Path(args.save_debug_event_data)}})
+                if index == 0
+                else event
+            )
         harness = _TrainingHarness(log=log, failure=failure)
         monkeypatch.setenv("MILES_SOAK_EVENT_LOG", str(log.path))
         monkeypatch.setattr(training, "get_backend_capability", lambda args: None)

@@ -24,4 +24,3 @@ def events() -> list[SoakEvent]:
         ),
         SoakAdmissionClosedEvent(timestamp=now),
     ]
-
