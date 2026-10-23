@@ -87,6 +87,7 @@ class SoakRunner:
                 if (request := self.scheduler.choose(events=events, now=time.monotonic())) is None:
                     continue
 
+                logger.info("soak op=action phase=request request=%s", request.model_dump_json())
                 self.event_log.append(SoakActionRequestedEvent(request=request))
                 actions.create_task(self._execute(request))
 
@@ -107,6 +108,22 @@ class SoakRunner:
 
     def _close_admission(self) -> None:
         if admission_closed(self.event_log.events) is None:
+            events = self.event_log.events
+            applied = [
+                action.requested.request for action in project_actions(events).values() if action.applied is not None
+            ]
+            logger.info(
+                "soak op=admission phase=close last_rollout=%s tail=%s applied=%s unproven=%s",
+                max((step.rollout_id for step in trainer_step_ends(events)), default=None),
+                self.config.tail,
+                [(request.target.kind, request.form_name) for request in applied],
+                [
+                    (kind, form.name)
+                    for kind, forms in self.forms.items()
+                    for form in forms
+                    if not any(request.target.kind == kind and request.form_name == form.name for request in applied)
+                ],
+            )
             self.event_log.append(SoakAdmissionClosedEvent())
 
     async def _execute(self, request: SoakActionRequest) -> None:
@@ -116,6 +133,7 @@ class SoakRunner:
             nonlocal reported
             assert not reported, f"Action reported its effect twice: {request.request_id}"
             reported = True
+            logger.info("soak op=action phase=applied request_id=%s evidence=%s", request.request_id, evidence)
             self.event_log.append(SoakActionAppliedEvent(request_id=request.request_id, evidence=evidence))
 
         try:
@@ -133,6 +151,7 @@ class SoakRunner:
                 SoakActionResultEvent(request_id=request.request_id, returned=False, error=repr(error))
             )
         else:
+            logger.info("soak op=action phase=returned request_id=%s", request.request_id)
             self.event_log.append(SoakActionResultEvent(request_id=request.request_id, returned=True))
 
 
