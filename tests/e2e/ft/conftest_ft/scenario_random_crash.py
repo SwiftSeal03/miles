@@ -144,6 +144,8 @@ def _build_train_args(
         + get_fully_async_args(fully_async=fully_async)
         + "--mini-ft-controller-enable "
     )
+    if fully_async and config.cluster_backend is ClusterBackend.RAY:
+        train_args += "--trainer-heartbeat-checker-first-wait 0 "
     if ft_mode.has_real_rollout:
         train_args += "--update-weight-transfer-mode p2p "
         train_args += "--sglang-remote-instance-weight-loader-start-seed-via-transfer-engine "

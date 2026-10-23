@@ -141,6 +141,7 @@ class TestTheLaunchedTrainArguments:
             expected_components.append("weight_update")
         assert parsed.ft_components == expected_components
         assert parsed.mini_ft_controller_enable
+        assert "--trainer-heartbeat-checker-first-wait" not in launch.argv
         assert not parsed.namespace.colocate
         assert "rollout" not in parsed.ft_components or parsed.partial_target_weight_update
         _assert_the_gpu_layout_is_the_modes(launch.request.num_gpus_per_node, parsed.namespace, mode=mode)
@@ -209,6 +210,7 @@ class TestTheLaunchedTrainArguments:
         assert launch.request.extra_env_vars["MILES_SOAK_EVENT_LOG"] == str(soak["event_log"].path)
         assert "--fully-async" in launch.argv
         assert launch.value_of("--pause-generation-mode") == "in_place"
+        assert launch.value_of("--trainer-heartbeat-checker-first-wait") == "0"
         assert soak["dump_dir"].name == f"random_crash_fully_async_{_MIXED_MODE}"
 
     def test_the_fully_async_entry_soaks_trainers_and_real_engines_through_the_async_driver(
