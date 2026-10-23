@@ -149,7 +149,7 @@ def _build_train_args(
             dump_dir=dump_dir,
             num_steps=num_steps,
             debug_rollout_data_dir=debug_rollout_data_dir,
-            )
+        )
         + get_ft_args(
             ft_mode, api_server_args=API_SERVER_ARGS, extra_ft_components=_compute_extra_ft_components(ft_mode)
         )
