@@ -9,11 +9,13 @@ Multi-LoRA keeps every adapter's accumulated gradients on the training GPUs betw
 sampling use separate GPUs, with PP 1 and no offload:
   mimo26-p4-bf16           4 training GPUs (TP4, EP4) + one TP4 engine on the BF16 base: one 8-GPU node
   MiMo-V2.6-Flash-RL-bf16  8 training GPUs (TP4, EP8) + four TP2 engines on the official FP8/MXFP4 checkpoint
-                           that `prepare` downloads: two 8-GPU nodes. With 4 slots at rank 16, an 8x4096-token
-                           forward_backward peaks at about 130 GB per training GPU; 4 slots at rank 32 need
-                           --actor-num-gpus 16 --expert-model-parallel-size 16 (three nodes).
+                           that `prepare` downloads: two 8-GPU nodes. The engines draft with EAGLE through the
+                           checkpoint's 3 MTP layers (3 steps, top-1, 4 draft tokens). With 4 slots at rank 16, an
+                           8x4096-token forward_backward peaks at about 130 GB per training GPU; 4 slots at rank 32
+                           need --actor-num-gpus 16 --expert-model-parallel-size 16 (three nodes).
 Sampling also needs SGLang LoRA support for MiMo-V2: per-layer qkv widths, a value head narrower than the key
-head, the dense first layer, skipping the vision/audio towers, and expert LoRA on the Marlin MXFP4 experts.
+head, the dense first layer, skipping the vision/audio towers, expert LoRA on the Marlin MXFP4 experts, and the
+MTP draft's fused FP8 qkv below TP 4.
 
 Args:
   --model-name: checkpoint directory under `--model-dir`; selects the layout above.
@@ -66,7 +68,8 @@ _LAYOUTS = {
         lora_rank=16,
         rollout_num_gpus=8,
         rollout_num_gpus_per_engine=2,
-        # weights take 82 GB per GPU and 4 rank-16 LoRA slots another 23 GB, leaving ~13 GB of KV cache
+        # weights take 82 GB per GPU and 4 rank-16 LoRA slots another 23 GB; the MTP draft shrinks the KV cache
+        # that is left from about 153k to 97k tokens per engine
         sglang_mem_fraction_static=0.85,
         official_engine=True,
     ),
@@ -181,6 +184,12 @@ def serve(args: ScriptArgs):
     if layout.official_engine:
         engine_config = _engine_config(_official_checkpoint(args.model_dir), layout.rollout_num_gpus)
         sglang_args += f"--sglang-config {U.encode_pseudo_file(engine_config)} "
+        # one MTP layer of the official checkpoint per draft step
+        sglang_args += (
+            "--sglang-speculative-algorithm EAGLE --sglang-enable-multi-layer-eagle "
+            "--sglang-speculative-num-steps 3 --sglang-speculative-eagle-topk 1 "
+            "--sglang-speculative-num-draft-tokens 4 "
+        )
 
     misc_args = (
         "--attention-dropout 0.0 "
