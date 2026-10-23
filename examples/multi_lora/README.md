@@ -4,7 +4,7 @@
 
 - `serve_qwen3_30b_a3b_tinker.py`: prepare Qwen3-30B-A3B and launch the gateway.
 - `run_multi_tenant_example.py`: check marker memorization for one client or adapter isolation across concurrent tenants.
-- `tinker_agent/`: train on agent rollouts; see [Train on agent rollouts](#train-on-agent-rollouts).
+- `tinker_agent/`: client package for agentic training; see [Agentic training](#agentic-training).
 
 ## Layout
 
@@ -38,9 +38,9 @@ python examples/multi_lora/serve_qwen3_30b_a3b_tinker.py serve     # Tinker API 
 
 Checkpoints default to `<output_dir>/checkpoints/<run_id>`; use `--save-dir` to choose another root.
 
-The launcher sets `--log-probs-chunk-size 1024`, so log-probs over long sequences are
-computed 1024 tokens at a time to keep peak GPU memory down. To change it, add for example
-`--extra-args "--log-probs-chunk-size 2048"` to the `serve` command.
+The launcher sets `--log-probs-chunk-size 1024`, which computes log-probs in 1024-token chunks
+to bound peak GPU memory on long sequences. To override it, add
+`--extra-args "--log-probs-chunk-size <N>"` to the `serve` command.
 
 Install `tinker` on the client, then run the marker checks:
 
@@ -53,33 +53,31 @@ python examples/multi_lora/run_multi_tenant_example.py --base-model /root/models
 python examples/multi_lora/run_multi_tenant_example.py --base-model /root/models/Qwen3-30B-A3B --mode multi --clients 4
 ```
 
-## Train on agent rollouts
+## Agentic training
 
-To train on what an agent did, for example a coding agent in a sandbox, run the
-agent against the Tinker capture proxy with the client package in
-[tinker_agent](./tinker_agent/README.md). It records each model call's exact tokens
-and log-probs and turns an episode into training data.
+The gateway also supports agentic RL with your own sandbox or harness through the official
+Tinker cookbook capture recipe. The [tinker_agent](./tinker_agent/README.md) client package
+records each model call's exact tokens and log-probs and converts each episode into training
+data.
 
 ## Context window
 
-Each sampled sequence, prompt plus completion, must fit one window: the smaller of
+Each sampled sequence, prompt plus completion, must fit a single window, defined as the smaller of:
 
-- the trainer's per-sequence limit, `--max-tokens-per-gpu` rounded down to a multiple of
-  TP × `--data-pad-size-multiplier`, times the context-parallel size; and
-- the inference limit, `--sglang-context-length` (the model's maximum length if unset)
-  minus 7 tokens, so SGLang still accepts a full-window sequence as a prompt.
+- the trainer's per-sequence limit: `--max-tokens-per-gpu`, rounded down to a multiple of
+  TP × `--data-pad-size-multiplier`, times the context-parallel size;
+- the inference limit: `--sglang-context-length` (the model's maximum length if unset) minus 7
+  tokens, so that SGLang accepts a full-window sequence as a prompt.
 
-With the launcher's defaults the window is 8192 tokens.
+With the launcher defaults, the window is 8192 tokens. For each sampling request, the gateway:
 
-When you sample, the gateway:
+- clamps `max_tokens` to the remaining window, without modifying the client's request;
+- rejects a prompt that leaves no generation budget with HTTP 400 `prompt is too long`, before
+  dispatch to the engine. Agent harnesses use this error to trigger history compaction;
+- accepts a full-window sequence for scoring with `compute_logprobs`.
 
-- lowers `max_tokens` to what is left in the window. The request you sent is unchanged.
-- rejects a prompt that leaves no room to generate with HTTP 400 `prompt is too long`,
-  before the prompt reaches the engine. Agents can use this error to compact their history.
-- still scores a full-window sequence with `compute_logprobs`.
-
-Training datums are checked only against the trainer limit, so a shorter inference window
-does not shrink what you can train on.
+Training Datums are validated against the trainer limit only; a shorter inference window does
+not reduce the trainable sequence length.
 
 ## Supported inputs
 

@@ -1,44 +1,33 @@
-# Train on agent rollouts with Tinker capture
+# Agentic training with Tinker capture
 
-You have an agent that talks to a chat API, such as a coding agent in a sandbox
-or a tool-using harness, and you want to train the model on what the agent did.
-RL needs the exact tokens the model sampled and their log-probs. Re-tokenizing
-the chat transcript afterwards does not give you those back.
+The Miles Tinker gateway supports agentic RL with your own sandbox or harness through the
+official Tinker cookbook capture recipe. Agents call an OpenAI- or Anthropic-compatible proxy;
+each model call is recorded with its exact prompt tokens, sampled tokens and log-probs, and each
+episode is read back as a cookbook `Trajectory` for training. Training uses the sampled tokens
+directly, with no re-tokenization of the chat transcript.
 
-`tinker_agent` puts the Tinker cookbook's capture proxy in front of your
-sampling client:
+`tinker_agent` is a standalone client package with no Miles dependency. It runs against the
+Miles gateway or the hosted Tinker service.
 
-1. The agent calls the proxy like any OpenAI- or Anthropic-compatible API.
-2. Every model call is recorded with its exact prompt tokens, sampled tokens
-   and log-probs.
-3. After the episode, you read the calls back as a cookbook `Trajectory` and
-   train on it.
+## Requirements
 
-It works with the Miles multi-LoRA gateway or the hosted Tinker service, and
-the package does not depend on Miles.
-
-## Before you start
-
-- **A Tinker endpoint.** Start the Miles gateway as described in
-  [Multi-LoRA Tinker Gateway](../README.md) (it serves on port `10613`), or use
-  the hosted Tinker service.
-- **The client package**, on Python 3.11 or newer. It pins `tinker==0.26.2` and
+- A Tinker endpoint: the Miles gateway from [Multi-LoRA Tinker Gateway](../README.md) (port
+  `10613`), or the hosted Tinker service.
+- Python 3.11 or newer, with the client package installed. The package pins `tinker==0.26.2` and
   `tinker-cookbook`:
 
   ```bash
   uv pip install ./examples/multi_lora/tinker_agent
   ```
 
-- **The renderer name for your model**, so that the proxy formats chats with
-  the model's own template: `qwen3` for the Qwen3-30B-A3B checkpoint the
-  gateway launcher serves, `qwen3_instruct` for Qwen3 Instruct-2507 models. See
-  `tinker_cookbook.renderers.get_renderer` for the full list.
+- The cookbook renderer for the served model: `qwen3` for Qwen3-30B-A3B, the checkpoint the
+  gateway launcher serves; `qwen3_instruct` for Qwen3 Instruct-2507 models. See
+  `tinker_cookbook.renderers.get_renderer` for all renderers.
 
 ## Example
 
-This script runs one two-turn episode through the proxy, scores it, and takes
-one PPO step on the captured tokens. The `run_agent` function stands in for your
-agent. Save it as `agent_rl.py`:
+`agent_rl.py` runs one two-turn episode through the proxy, assigns it a reward and applies one
+PPO step to the captured tokens. `run_agent` stands in for the agent.
 
 ```python
 import argparse
@@ -111,64 +100,53 @@ Run it against the gateway:
 python agent_rl.py --base-url http://<gateway-host>:10613 --base-model /root/models/Qwen3-30B-A3B
 ```
 
-For a full recipe that runs Harbor tasks in sandboxes and trains with the
-cookbook's RL loop, see [Harbor recipe](../harbor_tinker/README.md).
+The [Harbor recipe](../harbor_tinker/README.md) applies this workflow to Harbor tasks in sandboxes,
+trained with the cookbook's RL loop.
 
-## How it works
+## Workflow
 
-1. **Capture.** `capture_to_store(run_id, data_dir=...)` starts a local capture
-   store and records every Tinker sampling call made inside it. Wrap the whole
-   job in it.
-2. **Proxy.** `serve_proxy(renderer, sampling_client, model_label=...,
-   default_max_tokens=...)` serves the proxy on a free local port and yields
-   the port. `default_max_tokens` applies when the agent's request does not set
-   `max_tokens`.
-3. **Agent URL.** Give each episode its own URL:
-   `http://<host>:<port>/r/run/<run_id>/group/<group_idx>/traj/<traj_idx>`.
-   - `run_id` must match the `capture_to_store` run.
-   - A group is the set of episodes you compare with each other, for example
-     several attempts at one task. The `group/<group_idx>` segment is optional.
-   - A traj is one episode.
-   - OpenAI clients use this URL plus `/v1` as their base URL (for
-     `/v1/chat/completions`). Anthropic clients use the URL itself (for
-     `/v1/messages`).
-4. **Flush.** After the episodes finish, leave the `serve_proxy` block so
-   in-flight calls complete, then call `flush_capture()`. It raises if any call
-   failed to be recorded, so you never train on a partial episode.
-5. **Read.** `read_samples(store_url, run_id, group_idx=..., traj_idx=...)`
-   returns an episode's calls in the order they were made.
-   `rows_to_trajectory(rows, stop_reason)` turns them into a `Trajectory`
-   without re-tokenizing. `stop_reason` is how the episode ended, such as
+1. **Capture.** `capture_to_store(run_id, data_dir=...)` starts a local capture store and records
+   every Tinker sampling call made within its scope. The whole job runs inside it.
+2. **Proxy.** `serve_proxy(renderer, sampling_client, model_label=..., default_max_tokens=...)`
+   serves the proxy on a free local port and yields the port. `default_max_tokens` applies to
+   requests that do not set `max_tokens`.
+3. **Episode URL.** Each episode uses its own base URL,
+   `http://<host>:<port>/r/run/<run_id>/group/<group_idx>/traj/<traj_idx>`:
+   - `run_id` matches the `capture_to_store` run.
+   - `group_idx` identifies a set of episodes that are compared with each other, such as several
+     attempts at one task. The `group/<group_idx>` segment is optional.
+   - `traj_idx` identifies one episode.
+   - OpenAI clients append `/v1` to this URL (`/v1/chat/completions`); Anthropic clients use it
+     as is (`/v1/messages`).
+4. **Flush.** After the episodes finish, exiting `serve_proxy` waits for in-flight calls.
+   `flush_capture()` then flushes the exporter and raises if any call was not recorded, so an
+   incomplete episode never reaches training.
+5. **Read.** `read_samples(store_url, run_id, group_idx=..., traj_idx=...)` returns an episode's
+   calls in call order. `rows_to_trajectory(rows, stop_reason)` converts them to a `Trajectory`
+   without re-tokenizing; `stop_reason` records how the episode ended, for example
    `"completed"`.
-6. **Train.** `trajectory_to_data(trajectory, traj_advantage)` builds the
-   Datums.
-7. **Update the policy.** After `optim_step`, save new sampler weights and serve
-   the next episodes through a new proxy with the new sampling client.
+6. **Train.** `trajectory_to_data(trajectory, traj_advantage)` builds the Datums.
+7. **Policy update.** After `optim_step`, save new sampler weights and serve the next episodes
+   through a new proxy with the updated sampling client.
 
-## Agents in a sandbox
+## Sandboxed agents
 
-By default the proxy listens on `127.0.0.1`. To accept connections from a
-sandbox, pass `host="0.0.0.0"` and an `auth_token`. The proxy refuses a
-non-loopback address without a token. Give the agent the token as its API key:
+The proxy listens on `127.0.0.1` by default. To accept connections from a sandbox, pass a
+reachable `host` such as `0.0.0.0` together with an `auth_token`; the proxy refuses a
+non-loopback bind without a token. The agent presents the token as its API key, as
+`Authorization: Bearer <token>` (OpenAI) or `x-api-key: <token>` (Anthropic). The URL given to
+the agent must use an address the sandbox can reach, not `0.0.0.0`.
 
-- OpenAI clients send it as `Authorization: Bearer <token>`.
-- Anthropic clients send it as `x-api-key: <token>`.
+## Limitations
 
-Advertise an address the sandbox can reach, not `0.0.0.0`.
-
-## What you handle
-
-- **Rewards.** Captured calls carry no reward. Compute it from your verifier and
-  pass it as the advantage.
-- **Failed calls.** Calls that fail are not retried, and they leave no row, so
-  the episode's trajectory contains only the calls that succeeded. Your agent
-  decides whether to retry or give up.
-- **Long histories.** When a prompt no longer fits the gateway's context window,
-  the request fails with HTTP 400 "prompt is too long". The agent should compact
-  its history or end the episode. See
+- **Rewards.** Captured calls carry no reward. The harness computes the reward and passes it as
+  the advantage.
+- **Failed calls.** Failed calls are not retried and produce no row, so a trajectory contains
+  only the successful calls. Retry policy belongs to the agent.
+- **Context window.** A prompt that exceeds the gateway's context window fails with HTTP 400
+  `prompt is too long`; the agent is expected to compact its history or end the episode. See
   [Context window](../README.md#context-window).
-- **Several attempts.** The proxy rejects `n` other than 1. Run each attempt as its own
-  episode, with its own `traj_idx` in the same group.
-
-The package adds no retries, refusal handling, request rewriting or
-partial-episode recovery.
+- **Multiple samples.** The proxy rejects `n` other than 1. Run each attempt as a separate
+  episode with its own `traj_idx` in the same group.
+- **Recovery.** The package provides no retries, refusal handling, request rewriting or
+  partial-episode recovery.
