@@ -559,7 +559,6 @@ Fault recovery must not cost end-to-end learning, which the comparison scenarios
 
 ### `scenario_random_crash_fully_async` and `scenario_realistic_gsm8k_fully_async`
 
-- **Random-crash Ray shutdown**: the test entry resumes rollout health checks after training, then waits for the external observer to record all expected cells alive and ready before disposal. Its bounded wait includes the configured health-check grace periods; final-state assertions remain strict.
 - **Random-crash Ray probe grace**: the fully-async eager soak sets `--trainer-heartbeat-checker-first-wait 0`; a 300-second wait after each recovery otherwise consumes its 60-rollout injection window before every enabled fault form can run. Health probes, quiescence, recovery witnesses and coverage assertions remain mandatory.
 
 ```

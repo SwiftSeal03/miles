@@ -169,7 +169,6 @@ def _run_soak(
     fully_async: bool,
     cell_fault_forms: CellFaultForms,
 ) -> SoakRunner:
-    wait_for_terminal_readiness = fully_async and config.cluster_backend is ClusterBackend.RAY
     expected_counts: dict[str, int] = {
         ACTOR_CELL_TYPE: ft_mode.num_cells,
         ROLLOUT_CELL_TYPE: ft_mode.rollout_num_engines,
@@ -188,14 +187,7 @@ def _run_soak(
                     train_args=train_args,
                     mode=ft_mode,
                     config=config,
-                    train_script=(
-                        "tests/utils/soak/ft/training.py"
-                        if wait_for_terminal_readiness
-                        else get_train_script(fully_async=fully_async)
-                    ),
-                    extra_env_vars=(
-                        {"MILES_SOAK_EVENT_LOG": str(event_log.path)} if wait_for_terminal_readiness else None
-                    ),
+                    train_script=get_train_script(fully_async=fully_async),
                 ),
                 accept_replaced=False,
             ),
