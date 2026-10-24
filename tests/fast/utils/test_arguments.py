@@ -6,12 +6,14 @@ import os
 import re
 import sys
 import tempfile
+from collections.abc import Callable
 from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+import torch
 from tests.fast.fixtures.megatron_config_fixtures import encode_megatron_config, write_megatron_config_trainers
 
 from miles.backends.fsdp_utils.arguments import build_fsdp_parser
@@ -34,6 +36,7 @@ from miles.utils.arguments import (
     _validate_rematerialize_param_from_master_weight,
     get_miles_extra_args_provider,
     miles_validate_args,
+    parse_args_and_get_parser,
     resolve_rollout_function_paths,
     supports_partial_target_weight_update,
     validate_async_off_policy_correction,
@@ -647,6 +650,7 @@ class TestMaybeApplyDumperOverrides:
     ) -> SimpleNamespace:
         return SimpleNamespace(
             dumper_enable=dumper_enable,
+            train_backend="megatron",
             use_fault_tolerance=use_fault_tolerance,
             ft_components=ft_components if ft_components is not None else [],
             mini_ft_controller_enable=None,
@@ -680,31 +684,23 @@ class TestMaybeApplyDumperOverrides:
 
     def test_disables_fault_tolerance_and_sglang_router_heartbeats(self) -> None:
         """Dumper mode turns off fault tolerance and the SGLang router health check."""
-        args = self._make_args(
-            dumper_enable=True,
-            use_fault_tolerance=True,
-        )
-        _maybe_apply_dumper_overrides(args)
-
+        args = _parse_megatron_args(['--dumper-enable', '--use-fault-tolerance', '--update-weight-transfer-mode', 'p2p'])
+        miles_validate_args(args)
         assert args.use_fault_tolerance is False
         assert args.router_disable_health_check is True
 
     def test_no_healing_loop_survives_dumper_mode(self) -> None:
         """It is resolved from ft_components, which dumper mode clears, so resolving it first
-        would leave the loop polling a registry with nothing in it for the whole run."""
-        args = self._make_args(dumper_enable=True, use_fault_tolerance=True, ft_components=["rollout"])
-
-        _maybe_apply_dumper_overrides(args)
-
+            would leave the loop polling a registry with nothing in it for the whole run."""
+        args = _parse_megatron_args(['--dumper-enable', '--use-fault-tolerance', '--update-weight-transfer-mode', 'p2p', '--ft-components', 'rollout'])
+        miles_validate_args(args)
         assert _resolve_mini_ft_controller_enable(args) is False
 
     def test_the_selected_ft_components_go_with_the_flag(self) -> None:
         """ft_components is resolved from the flag long before this runs, so clearing the flag
-        alone would leave every component selected and its probes still firing."""
-        args = self._make_args(dumper_enable=True, use_fault_tolerance=True, ft_components=["rollout", "train"])
-
-        _maybe_apply_dumper_overrides(args)
-
+            alone would leave every component selected and its probes still firing."""
+        args = _parse_megatron_args(['--dumper-enable', '--use-fault-tolerance', '--update-weight-transfer-mode', 'p2p', '--use-dynamic-batch-size', '--max-tokens-per-gpu', '1024', '--ft-components', 'rollout', 'train'])
+        miles_validate_args(args)
         assert args.ft_components == []
 
     def test_forces_single_rollout(self) -> None:
@@ -896,15 +892,19 @@ class TestClusterBackend:
 
         assert args.cluster_backend == "kubernetes"
 
-    def test_the_custom_config_file_still_decides_the_backend(self, tmp_path):
+    def test_the_custom_config_file_still_decides_the_backend(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """The config file overwrites args after the flags are parsed, so its backend must be the one that survives."""
         config = tmp_path / "override.yaml"
         config.write_text("cluster_backend: kubernetes\n")
         args = self._parse(["--custom-config-path", str(config), "--num-rollout", "1"])
 
-        miles_validate_args(args)
+        with caplog.at_level(logging.WARNING, logger="miles.utils.arguments"):
+            miles_validate_args(args)
 
         assert args.cluster_backend == "kubernetes"
+        assert "--custom-config-path is deprecated" in caplog.text
 
     def test_a_kubernetes_run_is_moved_onto_the_mooncake_object_store(self):
         """A ray store reference can only be redeemed by a ray driver, and this run has none."""
@@ -1222,6 +1222,7 @@ def test_sglang_parallel_sizes_keep_server_args_destinations():
     args.rollout_num_gpus_per_engine = 8
     args.true_on_policy_mode = False
     args.sglang_enable_dp_attention = True
+    args.loss_type = "policy_loss"
     args.use_session_server = False
 
     validate_sglang_args(args)
@@ -2899,6 +2900,7 @@ def test_sglang_parallel_sizes_use_short_namespace_fields(parallel_args, expecte
     args.true_on_policy_mode = False
     args.recompute_logprobs_via_prefill = False
     args.sglang_router_policy = None
+    args.loss_type = "policy_loss"
     args.use_session_server = False
 
     validate_sglang_args(args)
@@ -3608,6 +3610,37 @@ class TestMilesValidateArgsDiskDeltaResume:
 
         miles_validate_args(self._parse(load_dir, tmp_path))
 
+    @pytest.mark.parametrize(
+        "backend,build_parser", [("fsdp", build_fsdp_parser), ("torchtitan", build_torchtitan_parser)]
+    )
+    def test_native_disk_delta_validates_without_a_megatron_step_selector(
+        self, tmp_path: Path, backend: str, build_parser: Callable[..., argparse.ArgumentParser]
+    ) -> None:
+        """Native disk-delta validation preserves its namespace without a Megatron checkpoint selector."""
+        parser = build_parser(extra_args_provider=get_miles_extra_args_provider())
+        args = parser.parse_args(
+            [
+                "--train-backend",
+                backend,
+                "--num-rollout",
+                "1",
+                "--update-weight-transfer-mode",
+                "disk-delta",
+                "--update-weight-disk-dir",
+                str(tmp_path / "shared"),
+                "--update-weight-local-checkpoint-dir",
+                str(tmp_path / "local"),
+                "--hf-checkpoint",
+                str(tmp_path),
+            ]
+            + REQUIRED_ARGS
+        )
+
+        miles_validate_args(args)
+
+        assert args.requested_load is None
+        assert "ckpt_step" not in vars(args)
+
 
 class TestWeightUpdateDeadlines:
     def _parse(self, extra: list[str]) -> argparse.Namespace:
@@ -3772,3 +3805,54 @@ class TestWeightUpdateFaultToleranceSupport:
 
         with pytest.raises(AssertionError, match="weight_update FT requires Megatron"):
             miles_validate_args(args)
+
+
+@pytest.mark.parametrize("backend", ["megatron", "fsdp", "torchtitan"])
+def test_dumper_retention_override_is_only_added_for_megatron(backend: str) -> None:
+    """Dumper mode cannot introduce a Megatron-only checkpoint field into native backend arguments."""
+    args = TestMaybeApplyDumperOverrides()._make_args(dumper_enable=True)
+    args.train_backend = backend
+    del args.save_retain_interval
+
+    _maybe_apply_dumper_overrides(args)
+
+    assert args.save is None
+    assert args.save_interval is None
+    assert args.num_rollout == 1
+    assert ("save_retain_interval" in vars(args)) is (backend == "megatron")
+    if backend == "megatron":
+        assert args.save_retain_interval is None
+
+
+@pytest.mark.parametrize("backend", ["fsdp", "torchtitan"])
+@pytest.mark.parametrize("detach_heads", [True, False])
+def test_native_backends_own_the_mtp_detach_heads_argument(
+    monkeypatch: pytest.MonkeyPatch, backend: str, detach_heads: bool
+) -> None:
+    """Native backend parsing preserves the MTP option without an unowned argument error."""
+    monkeypatch.setattr(torch, "__version__", "2.13.0")
+    argv = [
+        "test",
+        "--train-backend",
+        backend,
+        "--rollout-batch-size",
+        "2",
+        "--num-rollout",
+        "1",
+        "--actor-num-gpus-per-node",
+        "1",
+        "--micro-batch-size",
+        "1",
+        "--rollout-max-response-len",
+        "1024",
+    ]
+    if not detach_heads:
+        argv.append("--no-mtp-detach-heads")
+    monkeypatch.setattr(sys, "argv", argv)
+
+    args, _ = parse_args_and_get_parser()
+
+    native_args = args.raw_fsdp if backend == "fsdp" else args.raw_torchtitan
+    assert native_args is not None
+    assert native_args.mtp_detach_heads is detach_heads
+    assert "mtp_detach_heads" not in args.model_fields

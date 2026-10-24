@@ -183,9 +183,10 @@ class TestAttentionDpLoRA:
     @pytest.mark.parametrize(("parallel", "attention_dp"), _ATTENTION_DP_SPELLINGS)
     def test_attention_dp_pins_the_adapter_beside_a_base_model_slot(self, parallel, attention_dp):
         """SGLang's attention-DP LoRA admits only pinned adapters, and never pins the slot it keeps for the base model."""
-        server_args = compute(
-            make_args(lora_rank=8, lora_adapter_path="/fake/adapter", debug_rollout_only=True, **parallel)
-        )
+        args = make_args(lora_rank=8, lora_adapter_path="/fake/adapter", debug_rollout_only=True, **parallel)
+        for name in ("sglang_attn_dp_size", "sglang_enable_dp_attention", "sglang_dp_size"):
+            delattr(args, name)
+        server_args = compute(args)
 
         pinned = {"lora_name": "miles_lora", "lora_path": "/fake/adapter", "pinned": True}
         assert server_args["lora_paths"] == [pinned if attention_dp else "miles_lora=/fake/adapter"]
