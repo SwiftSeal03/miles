@@ -2947,6 +2947,7 @@ def parse_args(add_custom_arguments=None, entry="train", preprocess_args=None):
         args = megatron_parse_args(extra_args_provider=add_miles_arguments)
         args.compress_ratios = None
         args.rollout_indexer_topk_num_streams = None
+        args.rollout_indexer_topk_width = None
         if args.hf_checkpoint:
             hf_config = load_hf_config(args.hf_checkpoint)
             args.compress_ratios = getattr(hf_config, "compress_ratios", None)
@@ -2962,6 +2963,8 @@ def parse_args(add_custom_arguments=None, entry="train", preprocess_args=None):
                 args.rollout_indexer_topk_num_streams = text_config.num_hidden_layers - layer_types.count(
                     "linear_attention"
                 )
+                # ids per stream and token; sizes the output store buffer
+                args.rollout_indexer_topk_width = text_config.index_topk
 
         # TODO: unify this .rank and .world_size w/ indep_dp logics
         args.rank = 0
