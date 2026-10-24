@@ -636,7 +636,7 @@ class VerifiersRolloutFn(BaseRolloutFn):
             runtime.SamplingConfig, self.eval_args, min_tokens=self.args.eval_min_new_tokens
         )
 
-        engine_count = self.args.rollout_num_gpus // self.args.rollout_num_gpus_per_engine
+        engine_count = max(self.args.inference_runtime_mut_state.engine_count, 1)
         self.max_concurrent = self.args.sglang_server_concurrency * engine_count
         pool_size = max(1, min(self.max_concurrent, 16))
         self.client = _train_client(runtime, self.args, self.model, pool_size)

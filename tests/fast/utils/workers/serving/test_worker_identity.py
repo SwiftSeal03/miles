@@ -153,3 +153,24 @@ class TestReadWorkerInPodIndex:
     def test_an_unsupervised_process_is_the_only_worker_of_its_pod(self):
         """A worker launched without the supervisor must still bind the port the address book predicts."""
         assert read_worker_in_pod_index({}) == 0
+
+
+class TestConstructorCellSize:
+    def test_constructor_context_counts_every_pod_in_the_cell(self) -> None:
+        """Every worker joins the full cell rather than only its own pod."""
+        from miles.utils.workers.serving.worker_identity import KubernetesWorkerIdentity
+
+        identity = KubernetesWorkerIdentity(
+            cell_index=4,
+            pod_in_cell_index=2,
+            pods_per_cell=3,
+            worker_in_pod_index=1,
+            workers_per_pod=2,
+            gpu_slots_per_worker=1,
+        )
+
+        context = identity.ctor_context(args=None, capability=FakeBackendCapability())
+
+        assert context.num_workers_per_cell == 6
+        assert context.worker_in_cell_index == 5
+        assert context.cell_index == 4

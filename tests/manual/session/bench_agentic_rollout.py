@@ -21,7 +21,9 @@ import sys
 import tempfile
 import threading
 import time
+from argparse import Namespace
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from tests.manual.session import _rollout_benchmark_agent as agent
@@ -33,11 +35,17 @@ from tests.manual.session.bench_session_server_overhead import (
     benchmark_resources,
 )
 
+if TYPE_CHECKING:
+    from miles.utils.args.runtime import AllConfig
+
 NUM_LAYERS = 48
 TOPK = 8
 
 
-def build_args(bench, prompt_path, backend_port, *, apply_chat_template=True):
+def build_args(
+    bench: Namespace, prompt_path: Path, backend_port: int, *, apply_chat_template: bool = True
+) -> "AllConfig":
+    from miles.utils.args.component_rollout import InferenceRuntimeMutState
     from miles.utils.arguments import parse_args
 
     argv = [
@@ -95,9 +103,15 @@ def build_args(bench, prompt_path, backend_port, *, apply_chat_template=True):
         argv.append("--apply-chat-template")
     with patch.object(sys, "argv", argv):
         args = parse_args()
-    args.num_layers = NUM_LAYERS
-    args.moe_router_topk = TOPK
-    return args
+    args.inference_runtime_mut_state.set_(InferenceRuntimeMutState(engine_count=1, gpu_count=1))
+    return args.model_copy(
+        update={
+            "num_layers": NUM_LAYERS,
+            "raw_megatron": args.raw_megatron.model_copy(
+                update={"base_args": args.raw_megatron.base_args | {"moe_router_topk": TOPK}}
+            ),
+        }
+    )
 
 
 def validate_samples(samples, specs, sessions):
@@ -146,7 +160,6 @@ def run_benchmark(bench):
     import psutil
 
     from miles.ray.rollout.rollout_executor import _compute_rollout_function_config
-
     from miles.rollout.base_types import RolloutFnConstructorInput, RolloutFnTrainInput
     from miles.rollout.inference_rollout.compatibility import call_rollout_function, load_rollout_function
     from miles.rollout.session.config import compute_session_server_config

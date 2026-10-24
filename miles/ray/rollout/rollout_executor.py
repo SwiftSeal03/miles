@@ -19,6 +19,7 @@ from miles.ray.rollout.train_data_conversion import (
     convert_samples_to_train_data,
     split_train_data_by_dp,
 )
+from miles.ray.specs.inference import inference_controller_worker_name
 from miles.rollout.base_types import (
     RolloutFnConstructorInput,
     RolloutFnEvalInput,
@@ -99,6 +100,7 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
         if not args.debug_train_only or args.eval_num_gpus > 0:
             await resolve_router_addrs(args, router_providers=self._router_providers)
             await wait_session_server_ready(args, provider=self._session_server_provider)
+        await self._refresh_inference_runtime_mut_state()
 
         # TODO make args immutable
         init_tracking(args, primary=False, router_addr=f"http://{args.sglang_router_ip}:{args.sglang_router_port}")
@@ -214,6 +216,7 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
     async def _generate_rollout_data(
         self, *, rollout_id: int, trainer_model_id: str | None
     ) -> tuple[list[Group], dict[str, Any]] | None:
+        await self._refresh_inference_runtime_mut_state()
         start_time = time.time()
         self._rollouts_since_publish_of_model_id[trainer_model_id] += 1
         assert_weight_version_is_published(
@@ -256,6 +259,7 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
         if self.args.debug_train_only:
             return
 
+        await self._refresh_inference_runtime_mut_state()
         with timer("eval_rollout"):
             if not self.use_legacy_rollout_v1:
                 result = await maybe_await(self.eval_generate_rollout(RolloutFnEvalInput(rollout_id=rollout_id)))
@@ -408,6 +412,12 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
                 eval_fn.load(directory / _EVAL_GENERATE_ROLLOUT_DIRNAME)
 
     # -------------------------- misc APIs -----------------------------
+
+    async def _refresh_inference_runtime_mut_state(self) -> None:
+        if not self.args.starts_inference_engines:
+            return
+        controller = self._inference_controller_provider.get_handle(inference_controller_worker_name())
+        self.args.inference_runtime_mut_state.set_(await controller.get_inference_runtime_immut_state())
 
     def get_num_rollout_per_epoch(self) -> int:
         assert self.args.rollout_global_dataset

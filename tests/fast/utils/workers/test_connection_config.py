@@ -1,6 +1,7 @@
 import json
 import pytest
 from tests.fast.utils.workers.fake_specs import FakeCommandSpec, FakeServeSpec
+from miles.utils.args.configs.scaling import ScalingConfig
 from miles.utils.workers.connection_config import WORKER_METADATA_ANNOTATION, WorkerPodMetadata, build_static_conn_config, build_worker_annotations
 from miles.utils.workers.worker_spec import PortInfo, SchedulingSpec, StaticMeta
 
@@ -8,17 +9,18 @@ class TestStaticConnectionConfig:
 
     def test_only_static_pools_are_embedded_in_the_launcher_payload(self) -> None:
         """GPU-slot pools must be discovered dynamically even when they request fractional GPUs."""
-        fixed = FakeServeSpec(name='fixed', worker_class='worker.Fixed', scheduling=SchedulingSpec.single(0))
-        dynamic = FakeServeSpec(name='dynamic', worker_class='worker.Dynamic', scheduling=SchedulingSpec(num_cells=3, num_workers_per_cell=2, num_gpus_per_worker=0.25, num_gpu_slots_per_worker=1, num_gpus_per_node=8))
-        result = build_static_conn_config(specs=[fixed, dynamic])
+        scaling = ScalingConfig()
+        fixed = FakeServeSpec(name='fixed', worker_class='worker.Fixed', fixed_scheduling=SchedulingSpec.single(0))
+        dynamic = FakeServeSpec(name='dynamic', worker_class='worker.Dynamic', fixed_scheduling=SchedulingSpec(num_cells=3, num_workers_per_cell=2, num_gpus_per_worker=0.25, num_gpu_slots_per_worker=1, num_gpus_per_node=8))
+        result = build_static_conn_config(specs=[fixed, dynamic], scaling=scaling)
         assert set(result.static_conn_infos) == {'fixed'}
         assert result.static_conn_infos['fixed'].worker_class == 'worker.Fixed'
         assert result.static_conn_infos['fixed'].num_cells == 1
 
     def test_command_pools_have_no_served_worker_class(self) -> None:
         """A static command pool must not advertise a callable RPC class."""
-        spec = FakeCommandSpec(name='command', port_infos=[PortInfo(name='http', static_port=9000)], scheduling=SchedulingSpec.single(0), command=str)
-        result = build_static_conn_config(specs=[spec])
+        spec = FakeCommandSpec(name='command', port_infos=[PortInfo(name='http', static_port=9000)], fixed_scheduling=SchedulingSpec.single(0), command=str)
+        result = build_static_conn_config(specs=[spec], scaling=ScalingConfig())
         assert result.static_conn_infos['command'].worker_class is None
         assert result.static_conn_infos['command'].port_infos[0].static_port == 9000
 
@@ -26,8 +28,8 @@ class TestWorkerAnnotations:
 
     def test_multinode_metadata_describes_each_pod_instead_of_the_whole_cell(self) -> None:
         """A two-node cell advertises each pod's worker count while preserving cell topology."""
-        spec = FakeServeSpec(name='trainer', category='training', worker_class='worker.Trainer', scheduling=SchedulingSpec(num_cells=3, num_workers_per_cell=16, num_gpus_per_worker=1, num_gpu_slots_per_worker=1, num_gpus_per_node=8), static_meta=StaticMeta(include_cell_index=True, gpu_offset_base=4, gpu_offset_stride_per_cell=16))
-        annotations = build_worker_annotations(spec=spec)
+        spec = FakeServeSpec(name='trainer', category='training', worker_class='worker.Trainer', fixed_scheduling=SchedulingSpec(num_cells=3, num_workers_per_cell=16, num_gpus_per_worker=1, num_gpu_slots_per_worker=1, num_gpus_per_node=8), static_meta=StaticMeta(include_cell_index=True, gpu_offset_base=4, gpu_offset_stride_per_cell=16))
+        annotations = build_worker_annotations(spec=spec, scaling=ScalingConfig())
         metadata = WorkerPodMetadata.model_validate_json(annotations[WORKER_METADATA_ANNOTATION])
         assert metadata.workers_per_pod == 8
         assert metadata.pods_per_cell == 2

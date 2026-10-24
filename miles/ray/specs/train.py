@@ -6,11 +6,13 @@ from typing_extensions import Self
 
 from miles.backends.megatron_utils.megatron_config import ACTOR_ROLE, CRITIC_ROLE, MegatronTrainerConfig
 from miles.ray.utils import NOSET_VISIBLE_DEVICES_ENV_VARS_LIST
+from miles.utils.args.configs.scaling import ScalingConfig
 from miles.utils.args.runtime import AllConfig, TrainerConfig
-from miles.utils.args.trainer_utils import compute_trainer_config
+from miles.utils.args.trainer_utils import compute_trainer_config, compute_trainer_total_gpus
 from miles.utils.environ import default_fp8_block_scaling_fp32_scales
 from miles.utils.lora.utils import is_multi_lora_enabled
-from miles.utils.megatron_args_utils import compute_megatron_world_size_except_dp
+from miles.utils.math_utils import exact_div
+from miles.utils.megatron_args_utils import compute_trainer_num_cells
 from miles.utils.workers.backend_capability.base import BackendCapability
 from miles.utils.workers.naming import (
     TRAINER_CONTROLLER_POOL_ID_PREFIX,
@@ -64,15 +66,14 @@ class TrainerControllerSpec(BaseServeSpec):
 
     @classmethod
     def create(cls, config: TrainerConfig) -> Self:
-        return cls(
-            args=config,
-            name=compute_trainer_controller_pool_id(config.trainer_id),
-            scheduling=SchedulingSpec(
-                num_cells=1,
-                num_workers_per_cell=1,
-                num_gpus_per_worker=0,
-                num_cpus_per_worker=1,
-            ),
+        return cls(args=config, name=compute_trainer_controller_pool_id(config.trainer_id))
+
+    def scheduling(self, scaling: ScalingConfig) -> SchedulingSpec:
+        return SchedulingSpec(
+            num_cells=1,
+            num_workers_per_cell=1,
+            num_gpus_per_worker=0,
+            num_cpus_per_worker=1,
         )
 
     def ctor_kwargs(self, ctx: WorkerCtorContext) -> dict[str, Any]:
@@ -154,14 +155,6 @@ class TrainerSpec(BaseServeSpec):
 
     @classmethod
     def create(cls, config: TrainerConfig) -> Self:
-        num_nodes, num_gpus_per_node = (
-            (config.critic_num_nodes, config.critic_num_gpus_per_node)
-            if config.trainer_role == CRITIC_ROLE
-            else (config.actor_num_nodes, config.actor_num_gpus_per_node)
-        )
-        total_gpus = num_nodes * num_gpus_per_node
-        num_cells = compute_trainer_num_cells(config, role=config.trainer_role)
-        assert total_gpus % num_cells == 0, f"{total_gpus=} must be divisible by {num_cells=}"
         return cls(
             args=config,
             name=compute_trainer_pool_id(config.trainer_id),
@@ -170,16 +163,6 @@ class TrainerSpec(BaseServeSpec):
                 PortInfo(name=MASTER_PORT_NAME, static_port=9000, mode="master", allow_dynamic=True),
                 DEFAULT_RPC_PORT_INFO,
             ],
-            scheduling=SchedulingSpec(
-                num_cells=num_cells,
-                num_workers_per_cell=total_gpus // num_cells,
-                num_gpus_per_worker=_NUM_GPUS_PER_TRAINER_WORKER,
-                num_cpus_per_worker=_NUM_GPUS_PER_TRAINER_WORKER,
-                num_gpu_slots_per_worker=1,
-                num_gpus_per_node=num_gpus_per_node,
-                pg_name="actor",
-                pg_slot_offset=_compute_trainer_pg_slot_offset(config),
-            ),
             static_meta=StaticMeta(values=dict(role=config.trainer_role), include_cell_index=True),
             worker_class=(
                 "miles.backends.megatron_utils.lora.actor.MultiLoRATrainRayActor"
@@ -191,13 +174,34 @@ class TrainerSpec(BaseServeSpec):
             concurrency_groups=TRAINER_CONCURRENCY_GROUPS if config.use_fault_tolerance else None,
         )
 
+    # TODO: support different sizes after the args refactor
+    def scheduling(self, scaling: ScalingConfig) -> SchedulingSpec:
+        config = self.args
+        is_critic = config.trainer_role == CRITIC_ROLE
+        total_gpus = compute_trainer_total_gpus(scaling, role=config.trainer_role)
+        num_cells = compute_trainer_num_cells(config, total_gpus=total_gpus)
+        return SchedulingSpec(
+            num_cells=num_cells,
+            num_workers_per_cell=exact_div(total_gpus, num_cells),
+            num_gpus_per_worker=_NUM_GPUS_PER_TRAINER_WORKER,
+            num_cpus_per_worker=_NUM_GPUS_PER_TRAINER_WORKER,
+            num_gpu_slots_per_worker=1,
+            num_gpus_per_node=scaling.critic_num_gpus_per_node if is_critic else scaling.actor_num_gpus_per_node,
+            pg_name="actor",
+            pg_slot_offset=(
+                0
+                if (i := config.trainer_actor_index) is None
+                else i * scaling.actor_num_nodes * scaling.actor_num_gpus_per_node
+            ),
+        )
+
     def env_var(self, ctx: WorkerLaunchContext) -> dict[str, str]:
         return compute_trainer_env_vars(ctx.args, ctx, fp8_scales=self.fp8_block_scaling_fp32_scales)
 
     def ctor_kwargs(self, ctx: WorkerCtorContext) -> dict[str, Any]:
         return dict(
             args=ctx.args,
-            world_size=_compute_trainer_world_size(ctx.args),
+            world_size=ctx.num_workers_per_cell,
             rank=ctx.worker_in_cell_index,
             role=ctx.args.trainer_role,
             cell_index=ctx.cell_index,
@@ -206,34 +210,6 @@ class TrainerSpec(BaseServeSpec):
 
 def compute_trainer_pool_id(trainer_id: str) -> str:
     return f"trainer-engine-{trainer_id}"
-
-
-def compute_trainer_num_cells(args, *, role: str) -> int:
-    num_nodes, num_gpus_per_node = (
-        (args.actor_num_nodes, args.actor_num_gpus_per_node)
-        if role == ACTOR_ROLE
-        else (args.critic_num_nodes, args.critic_num_gpus_per_node)
-    )
-    total_gpus = num_nodes * num_gpus_per_node
-    return (total_gpus // compute_megatron_world_size_except_dp(args)) if args.indep_dp else 1
-
-
-# TODO: support different sizes after the args refactor
-def _compute_trainer_pg_slot_offset(config: TrainerConfig) -> int:
-    if config.trainer_actor_index is None:
-        return 0
-    return config.trainer_actor_index * config.actor_num_nodes * config.actor_num_gpus_per_node
-
-
-def _compute_trainer_world_size(args: TrainerConfig) -> int:
-    total_gpus = (
-        args.critic_num_nodes * args.critic_num_gpus_per_node
-        if args.trainer_role == CRITIC_ROLE
-        else args.actor_num_nodes * args.actor_num_gpus_per_node
-    )
-    num_cells = compute_trainer_num_cells(args, role=args.trainer_role)
-    assert total_gpus % num_cells == 0, f"{total_gpus=} must be divisible by {num_cells=}"
-    return total_gpus // num_cells
 
 
 def compute_trainer_env_vars(args, ctx: WorkerLaunchContext, *, fp8_scales: str) -> dict[str, str]:

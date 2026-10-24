@@ -1,10 +1,13 @@
+import pytest
+
 from tests.fast.fixtures.args_fixtures import parse_megatron_test_config
 from tests.fast.fixtures.capability_fixtures import FakeBackendCapability
 from tests.fast.ray.rollout.conftest import make_args, make_inference_controller_config, make_rollout_config
 
-from miles.ray.specs.inference import InferenceControllerSpec
+from miles.ray.specs.inference import InferenceControllerSpec, InferenceRegistrationReporterSpec
 from miles.ray.specs.rollout import RolloutExecutorSpec
 from miles.ray.specs.train import TrainerControllerSpec
+from miles.utils.args.configs.scaling import ScalingConfig
 from miles.utils.args.trainer_utils import compute_trainer_config
 from miles.utils.workers.registration.hub import RegistrationHub
 from miles.utils.workers.worker_spec import WorkerCtorContext
@@ -74,3 +77,17 @@ class TestRuntimeConstructorConfig:
         assert kwargs["deployment_identity"].trainer_id == "runtime-actor"
         assert kwargs["deployment_identity"].run_uuid == "runtime-run"
         assert capability.requested_pool_ids == [["trainer-engine-runtime-actor"]]
+
+    @pytest.mark.parametrize("pin_to_head", [False, True])
+    def test_static_control_workers_follow_head_pinning(self, pin_to_head: bool) -> None:
+        """Every static control worker respects both settings of the rollout head placement flag."""
+        inference = make_inference_controller_config(make_args(pin_rollout_manager_to_head=pin_to_head))
+        rollout = make_rollout_config(pin_rollout_manager_to_head=pin_to_head)
+        specs = [
+            InferenceControllerSpec.create(inference),
+            InferenceRegistrationReporterSpec.create(inference),
+            RolloutExecutorSpec.create(rollout),
+        ]
+        scaling = ScalingConfig.model_construct()
+
+        assert [spec.scheduling(scaling).pin_to_head for spec in specs] == [pin_to_head] * 3

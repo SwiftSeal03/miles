@@ -723,3 +723,55 @@ class TestGetWorkerInfos:
             ["engine-00000-00000"],
             ["engine-00001-00000"],
         ]
+
+
+class TestCellQueryFilters:
+    @pytest.mark.parametrize(
+        "pool_ids,category,expected",
+        [
+            (None, "inference-engine", ["engine-00000", "ref-00000"]),
+            (["engine"], None, ["engine-00000"]),
+            (["trainer"], "inference-engine", []),
+            ([], None, []),
+        ],
+    )
+    async def test_query_filters_apply_after_watching_all_pools(
+        self, pool_ids: list[str] | None, category: str | None, expected: list[str]
+    ) -> None:
+        """Runtime queries intersect pool and category filters without widening empty selections."""
+        from miles.utils.workers.connection_config import WORKER_METADATA_ANNOTATION, WorkerPodMetadata
+        from miles.utils.workers.worker_spec import StaticMeta
+
+        engine = WorkerPodMetadata(
+            category="inference-engine",
+            workers_per_pod=1,
+            pods_per_cell=1,
+            gpu_slots_per_worker=1,
+            dynamic_pool=True,
+            worker_class=None,
+            port_infos=[],
+            static_meta=StaticMeta(),
+        )
+        trainer = engine.model_copy(update={"category": "trainer-engine"})
+        api = FakePodApi(
+            pods=[
+                make_pod(name="engine-0-0", annotations={WORKER_METADATA_ANNOTATION: engine.model_dump_json()}),
+                make_pod(
+                    name="ref-0-0", pool_id="ref", annotations={WORKER_METADATA_ANNOTATION: engine.model_dump_json()}
+                ),
+                make_pod(
+                    name="trainer-0-0",
+                    pool_id="trainer",
+                    annotations={WORKER_METADATA_ANNOTATION: trainer.model_dump_json()},
+                ),
+            ]
+        )
+        fake_pod_api.install(api)
+        run = KubernetesRunInfo(namespace=NAMESPACE, label_selector=SELECTOR, label_keys=DEFAULT_LABEL_KEYS)
+        provider = KubernetesWorkerProvider(run=run, pool_ids=None, resync_period=None)
+        stop = await _watch(provider, [])
+
+        try:
+            assert provider.cell_ids(pool_ids=pool_ids, category=category) == expected
+        finally:
+            await stop()

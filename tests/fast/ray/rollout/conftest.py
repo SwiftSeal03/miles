@@ -12,7 +12,9 @@ from sglang_router.launch_router import RouterArgs
 
 from tests.fast.fixtures.args_fixtures import parser_defaults
 
+from miles.ray.specs.inference import inference_controller_worker_name
 from miles.utils import object_store
+from miles.utils.args.component_rollout import InferenceRuntimeImmutState
 from miles.utils.args.configs.router import RouterConfig
 from miles.utils.args.custom_function import CustomFunctionConfig
 from miles.utils.args.runtime import AllConfig, InferenceControllerConfig, RolloutConfig
@@ -428,3 +430,17 @@ _CUSTOM_FUNCTION_FIELDS = [
     for name, field in AllConfig.model_fields.items()
     if field.annotation in {CustomFunctionConfig, CustomFunctionConfig | None}
 ]
+
+
+class FakeInferenceTopologyProvider:
+    """Serves the inference controller the rollout executor asks for the observed engine topology."""
+
+    def __init__(self, state: InferenceRuntimeImmutState) -> None:
+        self._state = state
+
+    def get_handle(self, worker_name: str) -> FakeInferenceTopologyProvider:
+        assert worker_name == inference_controller_worker_name()
+        return self
+
+    async def get_inference_runtime_immut_state(self) -> InferenceRuntimeImmutState:
+        return self._state

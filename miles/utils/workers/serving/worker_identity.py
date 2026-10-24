@@ -5,14 +5,21 @@ from dataclasses import dataclass
 from typing import Any
 
 from miles.utils.workers.backend_capability.base import BackendCapability
-from miles.utils.workers.env_vars import CELL_INDEX_ENV_VAR, POD_INDEX_ENV_VAR, SUBPROCESS_INDEX_ENV_VAR
-from miles.utils.workers.worker_spec import SchedulingSpec, WorkerCtorContext
+from miles.utils.workers.connection_config import WorkerPodMetadata
+from miles.utils.workers.env_vars import (
+    CELL_INDEX_ENV_VAR,
+    POD_INDEX_ENV_VAR,
+    SUBPROCESS_INDEX_ENV_VAR,
+    WORKER_METADATA_ENV_VAR,
+)
+from miles.utils.workers.worker_spec import WorkerCtorContext
 
 
 @dataclass(frozen=True)
 class KubernetesWorkerIdentity:
     cell_index: int
     pod_in_cell_index: int
+    pods_per_cell: int
     worker_in_pod_index: int
     workers_per_pod: int
     gpu_slots_per_worker: int
@@ -20,6 +27,10 @@ class KubernetesWorkerIdentity:
     @property
     def worker_in_cell_index(self) -> int:
         return self.pod_in_cell_index * self.workers_per_pod + self.worker_in_pod_index
+
+    @property
+    def num_workers_per_cell(self) -> int:
+        return self.pods_per_cell * self.workers_per_pod
 
     @property
     def gpu_ids(self) -> list[int]:
@@ -31,14 +42,17 @@ class KubernetesWorkerIdentity:
             args=args,
             cell_index=self.cell_index,
             worker_in_cell_index=self.worker_in_cell_index,
+            num_workers_per_cell=self.num_workers_per_cell,
             gpu_ids=self.gpu_ids,
             capability=capability,
         )
 
 
-def read_worker_identity(*, scheduling: SchedulingSpec, environ: Mapping[str, str]) -> KubernetesWorkerIdentity:
-    workers_per_pod = scheduling.workers_per_pod()
-    pods_per_cell = scheduling.pods_per_cell()
+def read_worker_identity(environ: Mapping[str, str]) -> KubernetesWorkerIdentity:
+    metadata = read_worker_metadata(environ)
+    workers_per_pod = metadata.workers_per_pod
+    pods_per_cell = metadata.pods_per_cell
+    gpu_slots_per_worker = metadata.gpu_slots_per_worker
 
     worker_in_pod_index = read_worker_in_pod_index(
         environ,
@@ -73,17 +87,18 @@ def read_worker_identity(*, scheduling: SchedulingSpec, environ: Mapping[str, st
         CELL_INDEX_ENV_VAR,
         required_because="nothing else tells this pod which cell of its pool it belongs to",
     )
-    assert (
-        cell_index < scheduling.num_cells
-    ), f"{CELL_INDEX_ENV_VAR} is {cell_index}, but the pool is scheduled with {scheduling.num_cells} cells"
-
     return KubernetesWorkerIdentity(
         cell_index=cell_index,
         pod_in_cell_index=pod_in_cell_index,
+        pods_per_cell=pods_per_cell,
         worker_in_pod_index=worker_in_pod_index,
         workers_per_pod=workers_per_pod,
-        gpu_slots_per_worker=scheduling.num_gpu_slots_per_worker,
+        gpu_slots_per_worker=gpu_slots_per_worker,
     )
+
+
+def read_worker_metadata(environ: Mapping[str, str]) -> WorkerPodMetadata:
+    return WorkerPodMetadata.model_validate_json(environ[WORKER_METADATA_ENV_VAR])
 
 
 def read_worker_in_pod_index(environ: Mapping[str, str], *, required_because: str | None = None) -> int:

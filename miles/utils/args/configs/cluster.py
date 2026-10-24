@@ -60,15 +60,28 @@ class ClusterConfig(BaseConfig):
         ),
     ] = None
     init_expected_num_cells: A[
-        int | None,
+        int | dict[str, int] | None,
         Arg(
+            type_parser=int,
             help=(
                 "How many engine cells per model this run waits for before it starts, when the engines are "
                 "deployed elsewhere and register themselves into it. The run cannot derive the number, because "
                 "the engine deployments are launched separately and may arrive late; declare here how many "
                 "cells the first rollout needs. It gates startup only, and the run keeps serving whatever "
                 "registers or leaves afterwards."
-            )
+            ),
+        ),
+    ] = None
+    trainer_init_expected_num_cells: A[
+        int | dict[str, int] | None,
+        Arg(
+            type_parser=int,
+            help=(
+                "How many cells per trainer this run waits for before it starts, keyed by trainer id. Defaults "
+                "to the cell count the trainer's GPUs are deployed as; declare it to keep the trainer configs "
+                "unchanged while the deployment scales. It gates startup only, and the trainer keeps using "
+                "whatever cells appear or leave afterwards."
+            ),
         ),
     ] = None
     trainer_controller_addrs: A[
@@ -90,20 +103,6 @@ class ClusterConfig(BaseConfig):
                 "Address of the one inference controller of the run, as host:port. Given "
                 "to a `--deploy-component inference` launch, whose reporter registers the engines it deploys "
                 "into that controller."
-            )
-        ),
-    ] = None
-    actor_num_nodes: A[int, Arg(help="Number of nodes for training actor")] = 1
-    actor_num_gpus_per_node: A[int, Arg(help="Number of gpus per node for training actor")] = 8
-    critic_num_nodes: A[int | None, Arg(help="Number of nodes for training actor")] = None
-    critic_num_gpus_per_node: A[int | None, Arg(help="Number of gpus per node for training actor")] = None
-    rollout_num_gpus: A[
-        int | None,
-        Arg(
-            help=(
-                "Number of GPUs for inference. Note that when using --colocate, "
-                "i.e. the training and the inference engines are on the same gpus, this param will be ignored and will be set as "
-                "actor_num_gpus_per_node * actor_num_nodes."
             )
         ),
     ] = None

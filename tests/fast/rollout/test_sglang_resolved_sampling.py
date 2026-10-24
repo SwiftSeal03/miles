@@ -8,6 +8,7 @@ from miles.rollout import sglang_rollout
 from miles.rollout.base_types import GenerateFnInput, GenerateFnOutput
 from miles.rollout.inference_rollout.inference_rollout_common import generate_and_rm_group
 from miles.rollout.inference_rollout.inference_rollout_eval import eval_rollout_single_dataset
+from miles.utils.args.component_rollout import InferenceRuntimeMutState
 from miles.utils.args.custom_function import CustomFunctionConfig
 from miles.utils.function_registry import function_registry
 from miles.utils.types import Sample
@@ -36,6 +37,7 @@ class TestResolvedDeterministicSampling:
         args.sglang = make_sglang_config(enable_deterministic_inference=enabled, dp_size=1)
         vars(args).pop("sglang_enable_deterministic_inference", None)
         args.rollout_seed = 17
+        args.inference_runtime_mut_state = InferenceRuntimeMutState(engine_count=1, gpu_count=1)
         args.custom_generate_function_path = CustomFunctionConfig(path="test-generation")
         args.n_samples_per_prompt = 2
         state = make_state(generate, args=args)

@@ -10,10 +10,11 @@ from uuid import uuid4
 
 from miles.backends.training_utils.types import TrainStepOutcome, TrainStepOutput
 from miles.ray.rollout.inference_controller import UpdatableEngines
-from miles.ray.specs.train import compute_trainer_num_cells, compute_trainer_pool_id
+from miles.ray.specs.train import compute_trainer_pool_id
 from miles.ray.train.cell import TrainerCell
 from miles.ray.train.cell_monitor import create_trainer_cell_health_checker
 from miles.ray.train_actor import WeightUpdateOutput
+from miles.utils.args.runtime import TrainerConfig
 from miles.utils import object_store
 from miles.utils.arguments import supports_partial_target_weight_update
 from miles.utils.async_utils import AsyncioGatherUtils, gather_and_raise_first
@@ -55,8 +56,8 @@ _RETRY_MAX_ATTEMPTS = 30
 _CELLS_READY_TIMEOUT_SECONDS = 3600.0
 
 
-def compute_trainer_health_checker_config(args, *, expected_num_cells: int) -> SimpleHealthCheckerConfig | None:
-    if expected_num_cells == 1:
+def compute_trainer_health_checker_config(args: TrainerConfig) -> SimpleHealthCheckerConfig | None:
+    if not args.indep_dp:
         return None
     return SimpleHealthCheckerConfig.from_args(args, prefix="trainer_heartbeat_checker")
 
@@ -103,7 +104,7 @@ class TrainerController:
 
     @property
     def _expected_num_cells(self) -> int:
-        return compute_trainer_num_cells(self.args, role=self._role)
+        return self.args.trainer_init_expected_num_cells
 
     @property
     def _cells(self) -> list[TrainerCell]:
@@ -344,12 +345,10 @@ class TrainerController:
         )
         object_store.init_instance(args, contribute_segment=False)
 
-        if self._expected_num_cells > 1:
+        if args.indep_dp:
             self._indep_dp_store, self._indep_dp_store_addr = create_tcp_store()
 
-        self._health_checker_config = compute_trainer_health_checker_config(
-            args, expected_num_cells=self._expected_num_cells
-        )
+        self._health_checker_config = compute_trainer_health_checker_config(args)
 
         self._witness_allocator: WitnessIdAllocator | None = (
             WitnessIdAllocator(buffer_size=args.witness_buffer_size) if args.enable_witness else None
@@ -370,17 +369,19 @@ class TrainerController:
         self._watcher_disposer = await self._provider.watch_cells(self._reconcile)
         await self._wait_expected_num_cells()
 
+        initial_cells = self._cells
+        initial_cell_indices = [cell.cell_index for cell in initial_cells]
         cell_results = await asyncio.gather(
             *[
                 cell.init(
                     indep_dp_info=self._compute_indep_dp_info(
                         cell_index=cell.cell_index,
                         # all cells will be alive for this first initialization
-                        alive_cell_indices=list(range(len(self._cells))),
+                        alive_cell_indices=initial_cell_indices,
                     ),
                     indep_dp_store_addr=self._indep_dp_store_addr,
                 )
-                for cell in self._cells
+                for cell in initial_cells
             ]
         )
         return [item for sublist in cell_results for item in sublist]

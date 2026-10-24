@@ -124,4 +124,7 @@ def resolve_parse_boundary_configs(args: argparse.Namespace) -> argparse.Namespa
     args.raw_megatron = resolve_megatron_config(args, base_args={})
     args.sglang = SglangConfig.parse_args(args)
     vars(args).update(RouterConfig.from_args(args))
+    from miles.utils.arguments import _compute_init_expected_num_cells
+
+    args.init_expected_num_cells = _compute_init_expected_num_cells(args, sglang=args.sglang)
     return args

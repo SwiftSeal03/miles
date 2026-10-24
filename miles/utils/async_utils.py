@@ -9,6 +9,8 @@ from contextlib import AsyncExitStack
 from types import TracebackType
 from typing import Any, TypeVar
 
+from typing_extensions import Self
+
 logger = logging.getLogger(__name__)
 
 
@@ -212,3 +214,27 @@ class Disposer:
                 self._stack.push_async_callback(teardown)
             else:
                 self._stack.callback(teardown)
+
+
+class DynamicLimitSemaphore:
+    def __init__(self, limit: Callable[[], int]) -> None:
+        self._limit = limit
+        self._condition = asyncio.Condition()
+        self._active = 0
+
+    async def __aenter__(self) -> Self:
+        async with self._condition:
+            await self._condition.wait_for(lambda: self._active < self._limit())
+            self._active += 1
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        async with self._condition:
+            self._active -= 1
+            assert self._active >= 0, f"{self._active=}"
+            self._condition.notify_all()

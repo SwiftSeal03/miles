@@ -1,5 +1,6 @@
 from miles.ray.specs.inference import POOL_CATEGORY_INFERENCE_ENGINE
 from miles.ray.specs.train import POOL_CATEGORY_TRAINER_ENGINE
+from miles.utils.args.configs.scaling import ScalingConfig
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.builder import build_values
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.helm_values_types import MilesRunChartValues
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.misc import LaunchPlan
@@ -97,5 +98,10 @@ def session_client() -> BaseCommandSpec:
     )
 
 
-def build_values_as_launched(specs: list[BaseSpec], plan: LaunchPlan) -> MilesRunChartValues:
-    return build_values(specs, plan)
+SCALING = ScalingConfig.model_construct()
+
+
+def build_values_as_launched(
+    specs: list[BaseSpec], plan: LaunchPlan, *, scaling: ScalingConfig = SCALING
+) -> MilesRunChartValues:
+    return build_values(specs, plan, scaling=scaling)
