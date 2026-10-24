@@ -95,7 +95,9 @@ def _has_ready_observation(*, events: list[SoakEvent], not_before: datetime) -> 
     try:
         assert_end_state_complete(
             events,
-            expected_count_of_kind={kind: config.expected_count for kind, config in context.config.target_configs.items()},
+            expected_count_of_kind={
+                kind: config.expected_count for kind, config in context.config.target_configs.items()
+            },
             observation_ends_with_sut=False,
         )
     except AssertionError:

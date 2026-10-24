@@ -40,7 +40,7 @@ class TestTerminalReadiness:
         )
         assert _has_ready_observation(events=events, not_before=before)
 
-    @pytest.mark.parametrize("failure", ["missing", "dead", "errors", "admission", "stale", "later_unready"])
+    @pytest.mark.parametrize("failure", ["missing", "dead", "errors", "timeout", "admission", "stale", "later_unready"])
     def test_incomplete_or_outdated_confirmation_does_not_release_training(
         self, events: list[SoakEvent], failure: str
     ) -> None:
@@ -49,7 +49,7 @@ class TestTerminalReadiness:
         target = _cell_target(kind="rollout", alive=failure != "dead")
         observation = SoakObservationEvent(
             timestamp=now,
-            completed_at=now,
+            completed_at=None if failure == "timeout" else now,
             targets=[] if failure == "missing" else [target],
             errors={"cells": "failed"} if failure == "errors" else {},
         )
