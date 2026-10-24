@@ -1,10 +1,14 @@
 import pytest
 from pydantic import ValidationError
+from tests.fast.fixtures.args_fixtures import parse_megatron_test_config
 
-from miles.backends.megatron_utils.megatron_config import MegatronArgsNamespace
+from miles.backends.fsdp_utils.config import FsdpArgsNamespace
+from miles.backends.megatron_utils.megatron_config import MegatronArgsNamespace, MegatronConfig
+from miles.backends.torchtitan_utils.args_namespace import TorchtitanArgsNamespace
 from miles.utils.args.component_trainer import TrainerOnlyConfig
 from miles.utils.args.custom_function import CustomFunctionConfig
 from miles.utils.args.custom_view import ImmutableNamespace, compute_custom_function_config
+from miles.utils.args.runtime import RolloutConfig
 from miles.utils.args.schema import BaseConfig
 
 
@@ -60,3 +64,51 @@ class TestCustomFunctionView:
         view = compute_custom_function_config(args, hook, {"temperature": 0.5}, nested_functions=[hook])
 
         assert view.temperature == 0.5
+
+
+class TestRolloutBackendView:
+    def test_megatron_global_fields_reach_nested_hooks_without_trainer_overrides(self) -> None:
+        """Rollout hooks retain global backend values independently of per-trainer overrides."""
+        config = parse_megatron_test_config("--num-experts", "4", "--moe-router-topk", "2")
+        trainer = config.raw_megatron.trainers[0].model_copy(update={"overrides": {"moe_router_topk": 1}})
+        args = RolloutConfig.slice_from(config).model_copy(
+            update={"raw_megatron": config.raw_megatron.model_copy(update={"trainers": [trainer]})}
+        )
+        hook = CustomFunctionConfig(path="outer")
+
+        view = compute_custom_function_config(args, hook)
+        nested = compute_custom_function_config(view, CustomFunctionConfig(path="inner"))
+
+        assert view.moe_router_topk == nested.moe_router_topk == 2
+        assert view.num_experts == nested.num_experts == 4
+        assert args.raw_megatron.base_args["moe_router_topk"] == 2
+        assert args.raw_megatron.trainers[0].overrides["moe_router_topk"] == 1
+        with pytest.raises(ValidationError, match="frozen"):
+            view.moe_router_topk = 1
+
+    @pytest.mark.parametrize("backend_type", [FsdpArgsNamespace, TorchtitanArgsNamespace])
+    def test_other_backend_fields_are_flat_in_rollout_hooks(
+        self, backend_type: type[FsdpArgsNamespace | TorchtitanArgsNamespace]
+    ) -> None:
+        """FSDP and TorchTitan rollout hooks retain their parsed backend fields."""
+        backend = backend_type(lr=0.01)
+        args = RolloutConfig.model_construct(
+            raw_megatron=MegatronConfig(trainers=[]),
+            raw_fsdp=backend if isinstance(backend, FsdpArgsNamespace) else None,
+            raw_torchtitan=backend if isinstance(backend, TorchtitanArgsNamespace) else None,
+        )
+
+        view = compute_custom_function_config(args, CustomFunctionConfig(path="legacy"))
+
+        assert view.lr == 0.01
+        assert view.backend_name == backend.backend_name
+        assert backend.lr == 0.01
+
+    def test_custom_config_cannot_override_flattened_backend_fields(self) -> None:
+        """Backend and hook configuration conflicts remain errors after flattening."""
+        config = parse_megatron_test_config("--moe-router-topk", "2")
+        args = RolloutConfig.slice_from(config)
+        hook = CustomFunctionConfig(path="legacy", config=ImmutableNamespace(moe_router_topk=1))
+
+        with pytest.raises(ValueError, match="moe_router_topk.*conflicting values"):
+            compute_custom_function_config(args, hook)

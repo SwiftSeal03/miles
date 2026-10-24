@@ -892,15 +892,19 @@ class TestClusterBackend:
 
         assert args.cluster_backend == "kubernetes"
 
-    def test_the_custom_config_file_still_decides_the_backend(self, tmp_path):
+    def test_the_custom_config_file_still_decides_the_backend(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """The config file overwrites args after the flags are parsed, so its backend must be the one that survives."""
         config = tmp_path / "override.yaml"
         config.write_text("cluster_backend: kubernetes\n")
         args = self._parse(["--custom-config-path", str(config), "--num-rollout", "1"])
 
-        miles_validate_args(args)
+        with caplog.at_level(logging.WARNING, logger="miles.utils.arguments"):
+            miles_validate_args(args)
 
         assert args.cluster_backend == "kubernetes"
+        assert "--custom-config-path is deprecated" in caplog.text
 
     def test_a_kubernetes_run_is_moved_onto_the_mooncake_object_store(self):
         """A ray store reference can only be redeemed by a ray driver, and this run has none."""

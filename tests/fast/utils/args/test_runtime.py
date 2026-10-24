@@ -1,7 +1,7 @@
 import pytest
 from tests.fast.fixtures.args_fixtures import parse_megatron_test_config
 from miles.backends.megatron_utils.megatron_config import MegatronArgsNamespace
-from miles.utils.args.runtime import TrainerConfig
+from miles.utils.args.runtime import AllConfig, TrainerConfig
 from miles.utils.args.trainer_utils import compute_trainer_config
 
 
@@ -51,3 +51,12 @@ class TestTrainerOwnership:
         assert trainer.pipeline_model_parallel_size == 4
         assert trainer.context_parallel_size == 8
         assert not set(vars(backend)).intersection(TrainerConfig.model_fields)
+
+
+class TestComponentTransport:
+
+    def test_unknown_all_config_fields_are_rejected(self) -> None:
+        """The complete run configuration rejects stale or misspelled serialized fields."""
+        config = parse_megatron_test_config()
+        with pytest.raises(ValueError, match='extra_forbidden'):
+            AllConfig.model_validate(config.model_dump(mode='python') | {'unknown_option': True})

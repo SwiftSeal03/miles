@@ -4,6 +4,9 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from miles.utils.workers.argv_utils import CONFIG_JSON_FLAG, ORCHESTRATOR_CONFIG_FLAG
+from miles.utils.workers.env_vars import WORKER_METADATA_ENV_VAR
+
 _SECRET_ENV_VAR_PATTERN = re.compile(
     r"(^|_)(KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|DATABASE_URL)$", re.IGNORECASE
 )
@@ -26,10 +29,14 @@ _REDACTED_HASH_CHARS = 16
 
 
 def redact_env_vars(env_vars: dict[str, Any]) -> dict[str, Any]:
-    return {
-        name: _redact_secret_value(value) if _SECRET_ENV_VAR_PATTERN.search(name) else value
-        for name, value in sorted(env_vars.items())
-    }
+    redacted = {}
+    for name, value in sorted(env_vars.items()):
+        if name == WORKER_METADATA_ENV_VAR:
+            value = _redact_config_json(str(value))
+        elif _SECRET_ENV_VAR_PATTERN.search(name):
+            value = _redact_secret_value(value)
+        redacted[name] = value
+    return redacted
 
 
 def redact_argv(argv: list[str]) -> list[str]:
@@ -97,10 +104,24 @@ def _argv_value_redactors() -> dict[str, Callable[[str], str]]:
         return f"--{name.replace('_', '-')}"
 
     return {
+        "--config": _redact_config_json,
+        CONFIG_JSON_FLAG: _redact_config_json,
+        ORCHESTRATOR_CONFIG_FLAG: _redact_config_json,
         **{flag(name): _redact for name in _SECRET_ARG_NAMES},
         **{flag(name): _redact_env_var_json for name in _ENV_VAR_ARG_NAMES},
         **{flag(name): _redact_url_userinfo for name in _URL_ARG_NAMES},
     }
+
+
+def _redact_config_json(value: str) -> str:
+    try:
+        config = json.loads(value)
+    except json.JSONDecodeError:
+        return _redact(value)
+    if not isinstance(config, dict):
+        return _redact(value)
+
+    return json.dumps(redact_config_values(config))
 
 
 def _redact_url_userinfo(value: str) -> str:

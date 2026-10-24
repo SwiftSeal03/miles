@@ -23,7 +23,7 @@ from miles.utils.test_utils.snapshot import (
     SNAPSHOT_UPDATE_ENV_VAR,
     assert_matches_snapshot,
 )
-from miles.utils.workers.worker_spec import CommandWorkerSpec, PortInfo, SchedulingSpec, ServeWorkerSpec
+from miles.utils.workers.worker_spec import BaseCommandSpec, BaseServeSpec, PortInfo, SchedulingSpec
 
 SNAPSHOT_DIR = REPO_ROOT / SNAPSHOT_DIRECTORY / "helm_backend"
 
@@ -34,8 +34,8 @@ NAMESPACE = "rl"
 PYTHON_PLACEHOLDER = "<PYTHON>"
 
 
-def _router() -> CommandWorkerSpec:
-    return CommandWorkerSpec(
+def _router() -> BaseCommandSpec:
+    return BaseCommandSpec(
         name="inference-router-0",
         port_infos=[PortInfo(name="primary", static_port=30000)],
         env_var=lambda ctx: {},
@@ -46,8 +46,8 @@ def _router() -> CommandWorkerSpec:
     )
 
 
-def _engine() -> CommandWorkerSpec:
-    return CommandWorkerSpec(
+def _engine() -> BaseCommandSpec:
+    return BaseCommandSpec(
         name="inference-engine-0-0",
         category=POOL_CATEGORY_INFERENCE_ENGINE,
         port_infos=[
@@ -69,8 +69,8 @@ def _engine() -> CommandWorkerSpec:
     )
 
 
-def _trainer() -> ServeWorkerSpec:
-    return ServeWorkerSpec(
+def _trainer() -> BaseServeSpec:
+    return BaseServeSpec(
         name="trainer-engine-actor",
         category=POOL_CATEGORY_TRAINER_ENGINE,
         port_infos=[PortInfo(name="master", static_port=9000, mode="master")],

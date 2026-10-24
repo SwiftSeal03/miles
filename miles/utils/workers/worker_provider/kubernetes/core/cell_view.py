@@ -10,13 +10,7 @@ from miles.utils.workers.naming import compute_worker_name
 from miles.utils.workers.worker_info import WorkerInfo
 from miles.utils.workers.worker_provider.base import CellInfo
 from miles.utils.workers.worker_provider.kubernetes.core import pod_view
-from miles.utils.workers.worker_spec import (
-    RPC_PORT_NAME,
-    HostAndPort,
-    NamedHostAndPorts,
-    ServeWorkerSpec,
-    WorkerMetaContext,
-)
+from miles.utils.workers.worker_spec import RPC_PORT_NAME, BaseServeSpec, HostAndPort, NamedHostAndPorts
 
 if TYPE_CHECKING:
     from miles.utils.workers.worker_provider.kubernetes.core.provider import KubernetesRunInfo
@@ -101,7 +95,7 @@ def _compute_worker_info(worker: KubernetesWorkerInfo, *, run: KubernetesRunInfo
         generation=worker.pod.restart_count,
         self_addrs=addrs_of_worker(worker, run=run),
         gpu_ids=list(worker.gpu_ids),
-        worker_class=spec.worker_class if isinstance(spec, ServeWorkerSpec) else None,
+        worker_class=spec.worker_class if isinstance(spec, BaseServeSpec) else None,
     )
 
 
@@ -148,10 +142,7 @@ def _has_all_pods(pods: list[pod_view.ParsedPod]) -> bool:
 
 
 def _spec_meta_of_pod(pod: pod_view.ParsedPod, *, run: KubernetesRunInfo) -> dict[str, Any]:
-    compute_meta = run.specs[pod.pool_id].meta
-    if compute_meta is None:
-        return {}
-    return dict(compute_meta(WorkerMetaContext(cell_index=pod.cell_index)))
+    return run.specs[pod.pool_id].static_meta.resolve(cell_index=pod.cell_index)
 
 
 def _pod_meta_of_cell(pods: list[pod_view.ParsedPod]) -> dict[str, str]:

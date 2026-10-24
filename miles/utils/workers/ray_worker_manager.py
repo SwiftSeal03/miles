@@ -33,15 +33,14 @@ from miles.utils.workers.worker_info import WorkerInfo
 from miles.utils.workers.worker_provider.base import CellInfo
 from miles.utils.workers.worker_spec import (
     RPC_PORT_NAME,
-    BaseWorkerSpec,
-    CommandWorkerSpec,
+    BaseCommandSpec,
+    BaseServeSpec,
+    BaseSpec,
     HostAndPort,
     LaunchCommandContext,
     NamedHostAndPorts,
-    ServeWorkerSpec,
     WorkerCtorContext,
     WorkerLaunchContext,
-    WorkerMetaContext,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,9 +60,7 @@ class RayWorkerManager:
         self.port_allocator = PortAllocator()
 
     @staticmethod
-    def launch(
-        args, specs: list[BaseWorkerSpec], pgs: dict[str, PlacementGroupInfo], *, comm_backend: WorkerCommBackend
-    ):
+    def launch(args, specs: list[BaseSpec], pgs: dict[str, PlacementGroupInfo], *, comm_backend: WorkerCommBackend):
         obj = ray.remote(RayWorkerManager).options(name=_ACTOR_NAME).remote()
         ray.get(obj.init.remote(args, specs, pgs, comm_backend=comm_backend))
         return obj
@@ -73,7 +70,7 @@ class RayWorkerManager:
         return ray.get_actor(_ACTOR_NAME)
 
     async def init(
-        self, args, specs: list[BaseWorkerSpec], pgs: dict[str, PlacementGroupInfo], *, comm_backend: WorkerCommBackend
+        self, args, specs: list[BaseSpec], pgs: dict[str, PlacementGroupInfo], *, comm_backend: WorkerCommBackend
     ):
         configure_logger(args, source=SimpleProcessIdentity(component="worker_manager"))
 
@@ -152,7 +149,7 @@ class RayWorkerManager:
         return actor.actor_handle
 
     def _compute_worker_info(self, actor: _BaseActorManager) -> WorkerInfo:
-        served_over_rpc = isinstance(actor.spec, ServeWorkerSpec) and self.comm_backend == WorkerCommBackend.RPC
+        served_over_rpc = isinstance(actor.spec, BaseServeSpec) and self.comm_backend == WorkerCommBackend.RPC
         return WorkerInfo(
             name=actor.name,
             generation=actor.generation,
@@ -177,11 +174,11 @@ class RayWorkerManager:
 
 @dataclass(kw_only=True)
 class _PoolManager:
-    spec: BaseWorkerSpec
+    spec: BaseSpec
     cells: list[_CellManager]
 
     @classmethod
-    def initial(cls, spec: BaseWorkerSpec, manager: RayWorkerManager) -> _PoolManager:
+    def initial(cls, spec: BaseSpec, manager: RayWorkerManager) -> _PoolManager:
         return cls(
             spec=spec,
             cells=[
@@ -196,16 +193,16 @@ class _PoolManager:
         )
 
 
-SpecT = TypeVar("SpecT", bound=BaseWorkerSpec)
+SpecT = TypeVar("SpecT", bound=BaseSpec)
 
 
-def _actor_manager_cls(spec: BaseWorkerSpec, *, comm_backend: WorkerCommBackend) -> type[_BaseActorManager]:
+def _actor_manager_cls(spec: BaseSpec, *, comm_backend: WorkerCommBackend) -> type[_BaseActorManager]:
     match spec, comm_backend:
-        case CommandWorkerSpec(), _:
+        case BaseCommandSpec(), _:
             return _CommandActorManager
-        case ServeWorkerSpec(), WorkerCommBackend.RPC:
+        case BaseServeSpec(), WorkerCommBackend.RPC:
             return _ServeActorRpcCommManager
-        case ServeWorkerSpec(), WorkerCommBackend.RAY:
+        case BaseServeSpec(), WorkerCommBackend.RAY:
             return _ServeActorRayCommManager
     raise AssertionError(f"{spec.name} is neither served nor launched as a command")
 
@@ -295,7 +292,7 @@ class _CellManager(Generic[SpecT]):
             alive=self.alive and self._all_workers_have_addrs,
             worker_names=[a.name for a in self.actors] if self.actors is not None else [],
             workers_hash=f"pseudo-hash-{self.generation}",
-            meta=f(WorkerMetaContext(cell_index=self.cell_index)) if (f := self.spec.meta) is not None else {},
+            meta=self.spec.static_meta.resolve(cell_index=self.cell_index),
         )
 
     @property
@@ -367,6 +364,7 @@ class _BaseActorManager(Generic[SpecT]):
     @property
     def launch_context(self) -> WorkerLaunchContext:
         return WorkerLaunchContext(
+            args=self.spec.args,
             cell_index=self.parent.cell_index,
             worker_in_cell_index=self.worker_in_cell_index,
             gpu_ids=self.gpu_ids,
@@ -442,7 +440,7 @@ class _BaseActorManager(Generic[SpecT]):
 
 
 @dataclass
-class _CommandActorManager(_BaseActorManager[CommandWorkerSpec]):
+class _CommandActorManager(_BaseActorManager[BaseCommandSpec]):
     async def launch_actor(self) -> None:
         self.actor_handle = self._create_actor(CommandActor)
 
@@ -469,7 +467,7 @@ class _CommandActorManager(_BaseActorManager[CommandWorkerSpec]):
 
 
 @dataclass
-class _ServeActorRayCommManager(_BaseActorManager[ServeWorkerSpec]):
+class _ServeActorRayCommManager(_BaseActorManager[BaseServeSpec]):
     def _compute_remote_options(self) -> dict:
         groups = self.spec.concurrency_groups
         return {} if groups is None else dict(concurrency_groups=groups)
@@ -524,7 +522,7 @@ def _route_method_to_concurrency_group(method: Callable, *, group: str) -> Calla
 
 
 @dataclass
-class _ServeActorRpcCommManager(_BaseActorManager[ServeWorkerSpec]):
+class _ServeActorRpcCommManager(_BaseActorManager[BaseServeSpec]):
     async def launch_actor(self) -> None:
         self.actor_handle = self._create_actor(
             ServeActor,
@@ -564,6 +562,7 @@ def bootstrapped_worker_class(worker_class_path: str) -> type:
 
 def _ctor_context(launch_context: WorkerLaunchContext) -> WorkerCtorContext:
     return WorkerCtorContext(
+        args=launch_context.args,
         cell_index=launch_context.cell_index,
         worker_in_cell_index=launch_context.worker_in_cell_index,
         gpu_ids=launch_context.gpu_ids,
