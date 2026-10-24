@@ -5,6 +5,7 @@ from argparse import Namespace
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tests.utils.soak.core.checkers.end_state import assert_end_state_complete
 from tests.utils.soak.core.events import SoakEvent, SoakRunContextEvent, StoredEvent
 from tests.utils.soak.core.views import admission_closed, latest_observation, project_actions, tail_started_at
 
@@ -82,21 +83,24 @@ def _has_ready_observation(*, events: list[SoakEvent], not_before: datetime) -> 
         assert action.result.returned, f"Action failed before terminal readiness: {request_id}"
 
     observation = latest_observation(events)
-    if observation is None or observation.targets is None or observation.errors:
+    if observation is None or observation.completed_at is None:
         return False
     if observation.timestamp < max(not_before, tail_started_at(events)):
         return False
     now = datetime.now(timezone.utc)
-    assert observation.completed_at is not None, "Terminal observation has no completion time"
     assert observation.timestamp <= observation.completed_at <= now, "Invalid terminal observation times"
     if (now - observation.timestamp).total_seconds() > _OBSERVATION_MAX_AGE_SECONDS:
         return False
 
-    return all(
-        len(targets := [target for target in observation.targets if target.kind == kind]) == config.expected_count
-        and all(target.alive and target.ready for target in targets)
-        for kind, config in context.config.target_configs.items()
-    )
+    try:
+        assert_end_state_complete(
+            events,
+            expected_count_of_kind={kind: config.expected_count for kind, config in context.config.target_configs.items()},
+            observation_ends_with_sut=False,
+        )
+    except AssertionError:
+        return False
+    return True
 
 
 if __name__ == "__main__":
