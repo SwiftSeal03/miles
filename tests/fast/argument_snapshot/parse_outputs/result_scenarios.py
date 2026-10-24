@@ -5,11 +5,10 @@ def result_scenarios() -> dict[str, ResultScenario]:
     scenarios = {backend: ResultScenario(backend=backend) for backend in ("megatron", "fsdp")}
     for backend in ("megatron", "fsdp"):
         for name, arguments in _shared_variants().items():
+            if backend == "fsdp" and name in {"rollout_ft", "ft_explicit_api"}:
+                arguments = (*arguments, "--ft-components", "rollout")
             scenarios[f"{backend}_{name}"] = ResultScenario(backend=backend, arguments=arguments)
         scenarios[f"{backend}_legacy"] = ResultScenario(backend=backend, legacy=True)
-        scenarios[f"{backend}_custom_arguments"] = ResultScenario(
-            backend=backend, custom=True, arguments=("--snapshot-custom", "29")
-        )
         for name, (arguments, error, message) in _rejected_variants().items():
             scenarios[f"{backend}_reject_{name}"] = ResultScenario(
                 backend=backend, arguments=arguments, error=error, message=message
@@ -17,6 +16,12 @@ def result_scenarios() -> dict[str, ResultScenario]:
 
     for name, arguments in _megatron_variants().items():
         scenarios[f"megatron_{name}"] = ResultScenario(backend="megatron", arguments=arguments)
+    scenarios["fsdp_reject_default_ft"] = ResultScenario(
+        backend="fsdp",
+        arguments=("--use-fault-tolerance", "--update-weight-transfer-mode", "p2p"),
+        error=AssertionError,
+        message="weight_update FT requires Megatron",
+    )
     scenarios["fsdp_hybrid_shard"] = ResultScenario(
         backend="fsdp", arguments=("--actor-num-gpus-per-node", "4", "--dp-replicate-size", "2")
     )
