@@ -96,7 +96,7 @@ async def test_harbor_http_calls_become_unmodified_training_data(
 )
 def test_only_scored_trial_outcomes_are_accepted(failure, reason):
     result = SimpleNamespace(
-        exception_info=None if failure is None else SimpleNamespace(exception_type=failure),
+        exception_info=None if failure is None else SimpleNamespace(exception_type=failure, exception_message=""),
         verifier_result=SimpleNamespace(rewards={"reward": 0.5}),
     )
     assert harbor.trial_outcome(result, "reward") == (0.5, reason)
@@ -134,8 +134,9 @@ def test_harbor_config_uses_native_defaults(tmp_path):
     assert "max_turns" not in trial.agent.kwargs
 
 
+@pytest.mark.parametrize("exception_type", ["NonZeroAgentExitCodeError", "NetworkConnectionError"])
 @pytest.mark.parametrize("suffix", ["", "\nConnection refused"])
-def test_official_proxy_context_error_is_scored_only_when_it_is_the_terminal_failure(suffix):
+def test_official_proxy_context_error_is_scored_only_when_it_is_the_terminal_failure(suffix, exception_type):
     message = (
         "Command failed (exit 1): mini-swe-agent\nstdout: traceback\n"
         "BadRequestError: litellm.BadRequestError: OpenAIException - prompt is too long: \n"
@@ -143,7 +144,7 @@ def test_official_proxy_context_error_is_scored_only_when_it_is_the_terminal_fai
         f"stderr: None{suffix}"
     )
     result = SimpleNamespace(
-        exception_info=SimpleNamespace(exception_type="NonZeroAgentExitCodeError", exception_message=message),
+        exception_info=SimpleNamespace(exception_type=exception_type, exception_message=message),
         verifier_result=SimpleNamespace(rewards={"reward": 0}),
     )
     if suffix:

@@ -8,6 +8,7 @@ from itertools import count
 from pathlib import Path
 
 import chz
+from harbor.agents.installed.base import NonZeroAgentExitCodeError
 from harbor.models.trial.config import TaskConfig, TrialConfig
 from harbor.trial.trial import Trial
 from tinker_agent.proxy import serve_proxy
@@ -90,6 +91,15 @@ def trial_config(template, task_path, proxy_url, proxy_api_key):
     return TrialConfig(task=TaskConfig(path=task_path), **json.loads(template))
 
 
+def _class_names(cls):
+    return {cls.__name__}.union(*map(_class_names, cls.__subclasses__()))
+
+
+# Harbor picks a subclass by scanning the agent's whole output, e.g. NetworkConnectionError for the
+# agent's own failed downloads, so the subclass does not say why the agent exited.
+AGENT_EXIT_ERRORS = _class_names(NonZeroAgentExitCodeError)
+
+
 def trial_outcome(result, reward_key):
     failure = result.exception_info
     if failure is None:
@@ -97,7 +107,7 @@ def trial_outcome(result, reward_key):
     elif failure.exception_type == "AgentTimeoutError":
         stop_reason = StopReason.ROLLOUT_TIMEOUT
     elif failure.exception_type == "ContextWindowExceededError" or (
-        failure.exception_type == "NonZeroAgentExitCodeError"
+        failure.exception_type in AGENT_EXIT_ERRORS
         # Harbor misses the official proxy's wording; match only the terminal CLI error.
         and re.search(
             r"\nBadRequestError:[^\n]*prompt is too long:\s*\d+ prompt tokens plus \d+ max_tokens "
