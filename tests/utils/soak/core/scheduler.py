@@ -98,17 +98,10 @@ class SoakActionScheduler:
             harms_target=form.harms_target,
         )
         if not targets:
-            logger.info(
-                "soak op=schedule phase=defer reason=no_eligible_target kind=%s form=%s targets=%s",
-                kind,
-                form.name,
-                [(target.identity, target.alive, target.ready) for target in targets_of_type[kind]],
-            )
             return None
         target = self.rng.choice(targets)
         request = form.maybe_create_request(target=target, observation=observation, events=events, rng=self.rng)
         if request is None:
-            logger.info("soak op=schedule phase=defer reason=no_request kind=%s form=%s", kind, form.name)
             return None
 
         self.awaiting_applied[kind] = request.request_id
@@ -138,14 +131,6 @@ class SoakActionScheduler:
             if (result := action.result) is not None and not result.returned:
                 raise RuntimeError(f"Soak action failed: {request.request_id}: {result.error}")
             if not form.is_recovered(action=action, events=events):
-                logger.info(
-                    "soak op=schedule phase=defer reason=recovery request_id=%s kind=%s form=%s applied=%s returned=%s",
-                    request.request_id,
-                    request.target.kind,
-                    request.form_name,
-                    action.applied is not None,
-                    result.returned if result is not None else None,
-                )
                 return False
         return True
 

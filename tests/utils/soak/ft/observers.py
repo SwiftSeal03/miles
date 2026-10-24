@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
@@ -23,9 +22,6 @@ from miles.utils.workers.k8s_types import Pod, PodList
 from miles.utils.workers.types import ClusterBackend, DeployComponent
 from miles.utils.workers.worker_provider.kubernetes.core.pod_view import parse_pod
 from miles.utils.workers.worker_provider.kubernetes.helm.env import DEFAULT_LABEL_KEYS
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -78,7 +74,6 @@ class CellObserver(SoakObserver):
                     for cell in CellList.model_validate(response.json()).items
                     if cell_type_of(cell) in self.cell_types
                 ]
-                logger.info("soak op=observe_cells cells=%s", CellList(items=cells).model_dump_json())
                 fault_targets = await self._observe_fault_targets(client=client, cells=cells, errors=errors)
         return cells, fault_targets
 
