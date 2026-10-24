@@ -8,7 +8,6 @@ from pathlib import Path
 
 from miles.ray.placement_group import create_rollout_components, maybe_start_api_server, update_weights
 from miles.ray.specs.train import compute_trainer_configs
-from miles.utils.arguments import parse_args
 from miles.utils.async_utils import Disposer, wait_cancelling_pending_on_first_completion, with_disposer
 from miles.utils.data import remove_rollout_data_refs
 from miles.utils.ft_utils.mini_ft_controller import maybe_start_mini_ft_controller
@@ -22,16 +21,21 @@ from miles.utils.multi_policy.utils import (
     define_policy_metric_groups,
     validate_multi_policy_args,
 )
-from miles.utils.orchestration_utils import init_orchestration_script
+from miles.utils.orchestration_utils import (
+    OrchestratorStartupInfo,
+    init_orchestration_script,
+    parse_orchestrator_startup_info,
+)
 from miles.utils.workers.worker_handle import BaseWorkerHandle
 
 logger = logging.getLogger(__name__)
 
 
-async def train_multi_policy(args, *, disposer: Disposer) -> None:
+async def train_multi_policy(startup_info: OrchestratorStartupInfo, *, disposer: Disposer) -> None:
+    args = startup_info.args
     megatron_config = args.raw_megatron
     validate_multi_policy_args(args, megatron_config=megatron_config)
-    capability = init_orchestration_script(args, disposer=disposer)
+    capability = init_orchestration_script(startup_info, disposer=disposer)
 
     define_policy_metric_groups(megatron_config)
 
@@ -212,5 +216,4 @@ async def _maybe_save_globally(
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    asyncio.run(with_disposer(train_multi_policy, args))
+    asyncio.run(with_disposer(train_multi_policy, parse_orchestrator_startup_info()))

@@ -2,7 +2,7 @@ from miles.backends.sglang_utils.sglang_scaling_config import SglangScalingConfi
 from miles.ray.specs.inference import POOL_CATEGORY_INFERENCE_ENGINE
 from miles.ray.specs.train import POOL_CATEGORY_TRAINER_ENGINE
 from miles.utils.args.configs.scaling import ScalingConfig
-from miles.utils.external_utils.command_utils.helm_backend.launcher.values.builder import build_values
+from miles.utils.external_utils.command_utils.helm_backend.launcher.values.builder import build_values, compute_static_connections
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.helm_values_types import MilesRunChartValues
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.misc import LaunchPlan
 from miles.utils.workers.worker_spec import BaseCommandSpec, BaseServeSpec, BaseSpec, PortInfo, SchedulingSpec
@@ -105,4 +105,6 @@ SCALING = ScalingConfig(sglang_scaling=SglangScalingConfig(groups={}))
 def build_values_as_launched(
     specs: list[BaseSpec], plan: LaunchPlan, *, scaling: ScalingConfig = SCALING
 ) -> MilesRunChartValues:
-    return build_values(specs, plan, scaling=scaling)
+    return build_values(
+        specs, plan, scaling=scaling, static_connections=compute_static_connections(specs, scaling=scaling)
+    )

@@ -9,13 +9,15 @@ from typing import Any
 
 from tests.fast.argument_snapshot.argparser.schema import snapshot_parser
 
+from miles.utils.args.schema import A, Arg, BaseConfig
+from miles.utils.arguments import parse_args_and_get_parser
+
 
 @dataclass(frozen=True)
 class _Scenario:
     backend: str
     arguments: tuple[str, ...] = ()
     legacy: bool = False
-    custom: bool = False
 
 
 def capture_scenarios(selected: list[str] | None = None) -> dict[str, Any]:
@@ -26,8 +28,6 @@ def capture_scenarios(selected: list[str] | None = None) -> dict[str, Any]:
         "fsdp": _Scenario(backend="fsdp"),
         "fully_async": _Scenario(backend="megatron", arguments=("--fully-async",)),
         "legacy": _Scenario(backend="megatron", legacy=True),
-        "custom_megatron": _Scenario(backend="megatron", custom=True),
-        "custom_fsdp": _Scenario(backend="fsdp", custom=True),
     }
     for name, flag in {
         "rollout": "--rollout-function-path",
@@ -38,16 +38,12 @@ def capture_scenarios(selected: list[str] | None = None) -> dict[str, Any]:
             backend="megatron", arguments=(flag, "tests.fast.argument_snapshot.argparser.scenarios._Hook")
         )
         scenarios[f"legacy_hook_{name}"] = _Scenario(
-            backend="megatron", arguments=(flag, "tests.fast.argument_snapshot.argparser.scenarios._Hook"), legacy=True
+            backend="megatron",
+            arguments=(flag, "tests.fast.argument_snapshot.argparser.scenarios._LegacyHook"),
+            legacy=True,
         )
-    scenarios["missing_hook_module"] = _Scenario(
-        backend="megatron", arguments=("--custom-generate-function-path", "miles_snapshot_missing.module")
-    )
     scenarios["hook_without_arguments"] = _Scenario(
         backend="megatron", arguments=("--custom-generate-function-path", "builtins.str")
-    )
-    scenarios["invalid_hook_path"] = _Scenario(
-        backend="megatron", arguments=("--custom-generate-function-path", "invalid_snapshot_path")
     )
     scenarios["hook_function"] = _Scenario(
         backend="megatron",
@@ -71,16 +67,13 @@ def capture_scenarios(selected: list[str] | None = None) -> dict[str, Any]:
 
 
 def _capture_scenario(scenario: _Scenario) -> dict[str, Any]:
-    from miles.utils.arguments import parse_args_and_get_parser
-
     arguments = ["--rollout-batch-size", "2", "--train-backend", "fsdp" if scenario.backend == "fsdp" else "megatron"]
     arguments.extend(["--num-rollout", "1", "--actor-num-gpus-per-node", "1", "--micro-batch-size", "1"])
     if scenario.backend == "megatron":
         arguments.extend(["--num-layers", "1", "--hidden-size", "128", "--num-attention-heads", "2"])
     arguments.extend(scenario.arguments)
     with _environment(arguments=arguments, legacy=scenario.legacy):
-        custom = _custom_arguments if scenario.custom else None
-        _, parser = parse_args_and_get_parser(add_custom_arguments=custom)
+        _, parser = parse_args_and_get_parser()
         parsed = {"minimal": vars(parser.parse_args(arguments))}
         variants = {
             "lora_disabled": ["--no-sglang-lora-use-virtual-experts"],
@@ -93,18 +86,15 @@ def _capture_scenario(scenario: _Scenario) -> dict[str, Any]:
         return {"argv": arguments, "legacy": scenario.legacy, "schema": snapshot_parser(parser), "parsed": parsed}
 
 
-def _custom_arguments(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser.add_argument("--snapshot-custom", type=int, default=17)
-    for action in parser._actions:
-        if "--padded-vocab-size" in action.option_strings:
-            action.default = 1024
-            break
-    else:
-        parser.add_argument("--padded-vocab-size", type=int, default=1024)
-    return parser
+class _HookConfig(BaseConfig):
+    snapshot_hook: A[int, Arg()] = 23
 
 
 class _Hook:
+    config_class = _HookConfig
+
+
+class _LegacyHook:
     @staticmethod
     def add_arguments(parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--snapshot-hook", type=int, default=23)
@@ -114,7 +104,7 @@ def _hook_function() -> None:
     pass
 
 
-_hook_function.add_arguments = _Hook.add_arguments
+_hook_function.add_arguments = _LegacyHook.add_arguments
 
 
 @contextmanager

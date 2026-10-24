@@ -59,8 +59,10 @@ def discard(args: Namespace) -> None:
 
 
 def _restorable_snapshot_dir(args: Namespace) -> Path | None:
-    if args.train_backend == "megatron" and args.finetune:
-        return None
+    if args.train_backend == "megatron":
+        backend_args = args.raw_megatron.base_args | args.raw_megatron.trainers[0].overrides
+        if backend_args["finetune"]:
+            return None
 
     if args.requested_load is None:
         return None

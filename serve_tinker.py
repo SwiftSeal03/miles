@@ -18,7 +18,7 @@ from miles.utils.arguments import parse_args
 from miles.utils.async_utils import Disposer, with_disposer
 from miles.utils.hf_utils.config import load_hf_config
 from miles.utils.http_utils import init_http_client
-from miles.utils.orchestration_utils import init_orchestration_script
+from miles.utils.orchestration_utils import ArgvOrchestratorStartupInfo, init_orchestration_script
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +40,7 @@ async def serve(args, *, disposer: Disposer):
         trainer_token_limit = local_token_limit * args.raw_megatron.base_args["context_parallel_size"]
         max_tokens_per_datum = min(max_tokens_per_datum, trainer_token_limit)
     assert max_tokens_per_datum > 0, "trainer token budget must fit at least one padding block"
-    capability = init_orchestration_script(args, disposer=disposer)
+    capability = init_orchestration_script(ArgvOrchestratorStartupInfo.create(args), disposer=disposer)
 
     await resolve_router_addrs(args, router_providers=compute_router_providers(args, capability=capability))
     inference_controller = create_inference_controller_handle(capability=capability)
