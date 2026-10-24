@@ -1,7 +1,11 @@
+from miles.backends.sglang_utils.sglang_scaling_config import SglangScalingConfig
 from miles.ray.specs.inference import POOL_CATEGORY_INFERENCE_ENGINE
 from miles.ray.specs.train import POOL_CATEGORY_TRAINER_ENGINE
+from miles.utils.args.configs.scaling import ScalingConfig
+from miles.utils.external_utils.command_utils.helm_backend.launcher.values.builder import build_values, compute_static_connections
+from miles.utils.external_utils.command_utils.helm_backend.launcher.values.helm_values_types import MilesRunChartValues
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.misc import LaunchPlan
-from miles.utils.workers.worker_spec import CommandWorkerSpec, PortInfo, SchedulingSpec, ServeWorkerSpec
+from miles.utils.workers.worker_spec import BaseCommandSpec, BaseServeSpec, BaseSpec, PortInfo, SchedulingSpec
 
 LAYOUT = LaunchPlan(
     run_id="260101-000000-000",
@@ -13,8 +17,8 @@ LAYOUT = LaunchPlan(
 )
 
 
-def router() -> CommandWorkerSpec:
-    return CommandWorkerSpec(
+def router() -> BaseCommandSpec:
+    return BaseCommandSpec(
         name="inference-router-0",
         port_infos=[PortInfo(name="primary", static_port=8000)],
         env_var=lambda ctx: {},
@@ -28,8 +32,8 @@ def engine(
     gpus_per_engine: int = 32,
     name: str = "inference-engine-0-0",
     gpu_offset: int = 0,
-) -> CommandWorkerSpec:
-    return CommandWorkerSpec(
+) -> BaseCommandSpec:
+    return BaseCommandSpec(
         name=name,
         category=POOL_CATEGORY_INFERENCE_ENGINE,
         port_infos=[
@@ -54,8 +58,8 @@ def engine(
     )
 
 
-def trainer(num_cells: int = 2, gpus_per_cell: int = 16) -> ServeWorkerSpec:
-    return ServeWorkerSpec(
+def trainer(num_cells: int = 2, gpus_per_cell: int = 16) -> BaseServeSpec:
+    return BaseServeSpec(
         name="trainer-engine-actor",
         category=POOL_CATEGORY_TRAINER_ENGINE,
         port_infos=[PortInfo(name="master", static_port=9000, mode="master")],
@@ -72,8 +76,8 @@ def trainer(num_cells: int = 2, gpus_per_cell: int = 16) -> ServeWorkerSpec:
     )
 
 
-def session_server(num_cells: int) -> CommandWorkerSpec:
-    return CommandWorkerSpec(
+def session_server(num_cells: int) -> BaseCommandSpec:
+    return BaseCommandSpec(
         name="session-server",
         port_infos=[PortInfo(name="primary", static_port=8000)],
         env_var=lambda ctx: {},
@@ -84,12 +88,23 @@ def session_server(num_cells: int) -> CommandWorkerSpec:
     )
 
 
-def session_client() -> CommandWorkerSpec:
-    return CommandWorkerSpec(
+def session_client() -> BaseCommandSpec:
+    return BaseCommandSpec(
         name="rollout-executor",
         port_infos=[PortInfo(name="primary", static_port=8100)],
         env_var=lambda ctx: {},
         scheduling=SchedulingSpec.single(num_gpus_per_worker=0),
         launch_command=lambda ctx: "python -m executor --session-servers "
         + ",".join(addrs["primary"].addr for addrs in ctx.pool_addrs["session-server"]),
+    )
+
+
+SCALING = ScalingConfig(sglang_scaling=SglangScalingConfig(groups={}))
+
+
+def build_values_as_launched(
+    specs: list[BaseSpec], plan: LaunchPlan, *, scaling: ScalingConfig = SCALING
+) -> MilesRunChartValues:
+    return build_values(
+        specs, plan, scaling=scaling, static_connections=compute_static_connections(specs, scaling=scaling)
     )

@@ -12,10 +12,11 @@ import yaml
 from miles.ray.specs.entrypoint import compute_specs
 from miles.ray.specs.train import (
     TRAINER_CONTROLLER_ADDRS_FLAG,
+    TrainerControllerSpec,
     compute_trainer_controller_pool_id,
     compute_trainer_ids,
-    specs_trainer_controller,
 )
+from miles.utils.args.configs.scaling import ScalingConfig
 from miles.utils.arguments import parse_args
 from miles.utils.env_report.launcher_report import LAUNCHER_REPORT_ENV_VAR
 from miles.utils.external_utils.command_utils.base_backend import (
@@ -46,7 +47,10 @@ from miles.utils.external_utils.command_utils.helm_backend.launcher.manifest_typ
 from miles.utils.external_utils.command_utils.helm_backend.launcher.observability import farewell, with_observability
 from miles.utils.external_utils.command_utils.helm_backend.launcher.observability.diagnosis import collect_diagnosis
 from miles.utils.external_utils.command_utils.helm_backend.launcher.observability.pod_facts import observed_pod
-from miles.utils.external_utils.command_utils.helm_backend.launcher.values.builder import build_values
+from miles.utils.external_utils.command_utils.helm_backend.launcher.values.builder import (
+    build_values,
+    compute_static_connections,
+)
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.misc import (
     InfraInfo,
     LaunchPlan,
@@ -57,7 +61,7 @@ from miles.utils.external_utils.command_utils.helm_backend.naming import Release
 from miles.utils.external_utils.command_utils.helm_backend.orchestrator.observer import wait_for_run
 from miles.utils.external_utils.model_args_utils import shell_safe_model_args
 from miles.utils.file_utils import atomic_write_text
-from miles.utils.object_store import ObjectStoreBackend
+from miles.utils.object_store_config import ObjectStoreBackend
 from miles.utils.run_uuid import generate_run_uuid, validate_run_uuid
 from miles.utils.workers.naming import DNS_LABEL_PATTERN
 from miles.utils.workers.serving.utils import override_argv, override_env
@@ -103,6 +107,7 @@ def execute_train(
     pod_argv, args = _compute_train_argv(
         request,
         run_uuid=run_uuid,
+        installed_manifest=installed_manifest,
         release=release,
         namespace=namespace,
         env=env,
@@ -117,8 +122,10 @@ def execute_train(
 
     run_directory = RunFiles.run_dir(shared_root=shared_root, run_id=run_id)
 
+    scaling = ScalingConfig.slice_from(args)
     with override_env(env):
         specs = compute_specs(args)
+        static_connections = compute_static_connections(specs, scaling=scaling)
 
     if config.ci_run:
         _uninstall_leftover_ci_releases(namespace, keep_run_id=run_id)
@@ -164,7 +171,10 @@ def execute_train(
                 ),
             }
         )
-        _write_helm_values(values_path, build_values(specs, rendered).as_values())
+        _write_helm_values(
+            values_path,
+            build_values(specs, rendered, scaling=scaling, static_connections=static_connections).as_values(),
+        )
         return computed, Helm.render_upgrade(
             release=release, namespace=namespace, chart=chart, values_files=values_files
         )
@@ -248,7 +258,8 @@ def execute_train(
 
 
 def _compute_trainer_controller_addrs(args: Any, *, release: str, namespace: str) -> dict[str, str]:
-    specs_by_pool_id = {spec.name: spec for spec in specs_trainer_controller(args)}
+    specs = map(TrainerControllerSpec.create, TrainerControllerSpec.slice_configs(args))
+    specs_by_pool_id = {spec.name: spec for spec in specs}
     addrs = {}
     for trainer_id in compute_trainer_ids(args):
         spec = specs_by_pool_id[compute_trainer_controller_pool_id(trainer_id)]
@@ -316,10 +327,30 @@ def _resolve_run_uuid(config: ExecuteTrainConfig, *, installed_manifest: Manifes
     return generate_run_uuid()
 
 
+def _resolve_wandb_run_id(args: Any, *, installed_manifest: Manifest | None, release: str) -> str | None:
+    if not args.use_wandb:
+        return None
+
+    if (given := args.wandb_run_id) is not None:
+        return given
+
+    if installed_manifest is not None:
+        installed = installed_manifest.flag_value(
+            _WANDB_RUN_ID_FLAG,
+            stateful_set=RunNames.orchestrator_object(release=release),
+            container=naming.ORCHESTRATOR_COMPONENT,
+        )
+        if installed is not None:
+            return installed
+
+    return _generate_wandb_run_id()
+
+
 def _compute_train_argv(
     request: ExecuteTrainRequest,
     *,
     run_uuid: str,
+    installed_manifest: Manifest | None,
     release: str,
     namespace: str,
     env: dict[str, str],
@@ -341,14 +372,18 @@ def _compute_train_argv(
         args = parse_args()
     assert LAUNCHER_REPORT_ENV_VAR not in args.train_env_vars
 
-    # TODO: remove after args refactor handles wandb ids
-    if args.use_wandb and args.wandb_run_id is None:
-        args.wandb_run_id = _generate_wandb_run_id()
-        argv = ArgvManipulator.set(argv, _WANDB_RUN_ID_FLAG, args.wandb_run_id)
+    wandb_run_id = _resolve_wandb_run_id(args, installed_manifest=installed_manifest, release=release)
+    if wandb_run_id is not None:
+        args.wandb_run_id = wandb_run_id
+        argv = ArgvManipulator.set(argv, _WANDB_RUN_ID_FLAG, wandb_run_id)
 
-    pod_argv = MooncakeInfo.with_cluster_master(
-        argv, plan=_compute_mooncake_plan(args), host=MooncakeInfo.master_service_host(release, namespace)
-    )
+    mooncake_plan = _compute_mooncake_plan(args)
+    mooncake_host = MooncakeInfo.master_service_host(release, namespace)
+    pod_argv = MooncakeInfo.with_cluster_master(argv, plan=mooncake_plan, host=mooncake_host)
+    if mooncake_plan is not None:
+        args = args.model_copy(
+            update={"mooncake_store_init_kwargs": MooncakeInfo.cluster_init_kwargs(mooncake_plan, host=mooncake_host)}
+        )
     return pod_argv, args
 
 

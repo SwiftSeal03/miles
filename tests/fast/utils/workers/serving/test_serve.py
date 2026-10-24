@@ -4,6 +4,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import ModuleType
 
 import httpx
 import pytest
@@ -21,6 +22,7 @@ from miles.utils.workers.env_vars import CELL_INDEX_ENV_VAR, SUBPROCESS_INDEX_EN
 from miles.utils.workers.rpc.client.handle import RpcWorkerHandle
 from miles.utils.workers.rpc.client.misc import ServerRestartedError
 from miles.utils.workers.serving import serve as serve_module
+from miles.utils.workers.serving import serve_inner
 from miles.utils.workers.serving.utils import split_worker_argv
 from miles.utils.workers.worker_handle import WorkerUnreachableError
 
@@ -263,3 +265,15 @@ class TestServeEndToEnd:
                 if second_process is not None:
                     _stop(second_process)
                 _stop(first_process)
+
+
+class TestCompleteWorkerPayload:
+    @pytest.mark.parametrize("entrypoint", [serve_module, serve_inner])
+    def test_worker_defaults_cannot_fill_missing_serialized_fields(
+        self, monkeypatch: pytest.MonkeyPatch, incomplete_worker_argv: list[str], entrypoint: ModuleType
+    ) -> None:
+        """Both serving entrypoints reject omitted worker fields before creating the worker spec."""
+        monkeypatch.setattr(sys, "argv", [entrypoint.__name__, *incomplete_worker_argv])
+
+        with pytest.raises(ValueError, match="worker_argv"):
+            entrypoint.main()

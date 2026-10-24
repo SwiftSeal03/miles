@@ -28,6 +28,8 @@ def single_rank(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _args(log_probs_chunk_size: int = -1) -> Namespace:
     return Namespace(
+        train_backend="fsdp",
+        backend=Namespace(bf16=False, fp16=False),
         true_on_policy_mode=True,
         log_probs_chunk_size=log_probs_chunk_size,
         use_sampling_support_replay=False,
@@ -108,3 +110,23 @@ def test_swapped_candidate_set_is_reported() -> None:
     abs_diff, set_mismatch = _check(logits, ids, logps)
     assert abs_diff.sum() == 0
     assert set_mismatch.tolist() == [1.0, 1.0, 0.0, 1.0]  # the observation row stays out of it
+
+
+@pytest.mark.parametrize("train_backend", ["fsdp", "torchtitan", "megatron"])
+def test_backend_vocabulary_scope_preserves_matching_candidates(train_backend: str) -> None:
+    """Only Megatron trims padded vocabulary logits using its backend configuration."""
+    args = _args()
+    args.train_backend = train_backend
+    logits = _logits()
+    if train_backend == "megatron":
+        args.backend.vocab_size = VOCAB - 3
+        logits[..., VOCAB - 3 :] = 100.0
+        scoring_logits = logits[..., : VOCAB - 3]
+    else:
+        scoring_logits = logits
+    ids, logps = _sampler_candidates(scoring_logits)
+
+    result = get_rollout_topk_mismatch(logits, args=args, batch=_batch(ids, logps))
+
+    assert result["topk_logprob_abs_diff"][0].tolist() == [0.0] * RESPONSE_LEN
+    assert result["topk_set_mismatch"][0].tolist() == [0.0] * RESPONSE_LEN

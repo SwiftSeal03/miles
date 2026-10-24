@@ -1,4 +1,8 @@
 from __future__ import annotations
+from miles.utils.workers.connection_config import WorkerPodMetadata
+from miles.utils.workers.worker_spec import PortInfo
+from miles.utils.workers.worker_spec import StaticMeta
+
 
 import pytest
 from tests.fast.utils.workers.worker_provider.kubernetes.run_specs import make_pool_spec
@@ -250,3 +254,26 @@ class TestDebugCellIncarnation:
 
         assert new.pods == old.pods
         assert new.workers_hash != old.workers_hash
+
+
+def make_worker_metadata(*, workers_per_pod: int=1, worker_class: str | None=ENGINE_CLASS, ports: dict[str, int] | None=None, static_meta: StaticMeta | None=None) -> WorkerPodMetadata:
+    return WorkerPodMetadata(workers_per_pod=workers_per_pod, pods_per_cell=1, gpu_slots_per_worker=1, dynamic_pool=True, worker_class=worker_class, port_infos=[PortInfo(name=name, static_port=port) for name, port in ({'rpc': 8000} if ports is None else ports).items()], static_meta=static_meta or StaticMeta())
+
+
+class TestObservedPortReservations:
+    def test_non_rpc_port_blocks_are_offset_but_master_ports_remain_shared(self) -> None:
+        """Observed engine addresses follow each declared port mode and reservation width."""
+        metadata = make_worker_metadata(workers_per_pod=2).model_copy(
+            update={
+                "port_infos": [
+                    PortInfo(name="primary", static_port=9000, num_consecutive=3),
+                    PortInfo(name="dist_init", static_port=10000, mode="master", num_consecutive=8),
+                ]
+            }
+        )
+        pod = make_parsed_pod(pod_in_cell_index=0, cell_size=1, gpu_ids=(0, 1), worker_metadata=metadata)
+
+        workers = build_worker_infos([pod])
+
+        assert [worker.self_addrs["primary"].port for worker in workers] == [9000, 9003]
+        assert [worker.self_addrs["dist_init"].port for worker in workers] == [10000, 10000]

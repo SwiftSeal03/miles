@@ -19,7 +19,7 @@ from tests.fast.charts.utils import (
     objects_of_kind,
     requires_helm,
 )
-from tests.fast.launch_scripts.sh_harness import REPO_ROOT, SANDBOX_PLACEHOLDER, assert_matches_snapshot
+from tests.fast.launch_scripts.sh_harness import REPO_ROOT, SANDBOX_PLACEHOLDER
 
 from miles.ray.specs.entrypoint import compute_specs
 from miles.utils.arguments import parse_args
@@ -27,9 +27,11 @@ from miles.utils.external_utils.command_utils.common import rsync_cmd
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.builder import build_values
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.misc import LaunchPlan
 from miles.utils.external_utils.model_args_utils import load_model_args
+from miles.utils.test_utils.snapshot import SNAPSHOT_DIRECTORY, assert_matches_snapshot
+from miles.utils.tracking_utils.ci_history import RECORD_DIR_ENV
 from miles.utils.workers.serving.utils import override_argv
 
-SNAPSHOT_DIR = REPO_ROOT / "tests" / "snapshots" / "charts" / "miles-run"
+SNAPSHOT_DIR = REPO_ROOT / SNAPSHOT_DIRECTORY / "charts" / "miles-run"
 FIXTURE_DIR = Path(__file__).resolve().parent
 INFRA_VALUES = FIXTURE_DIR / "typical-infra.yaml"
 SGLANG_CONFIG = FIXTURE_DIR / "typical-sglang.yaml"
@@ -166,6 +168,7 @@ SCENARIO_ARGV = [
 @pytest.fixture(autouse=True)
 def parser_process_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(sys, "orig_argv", [sys.executable, "-m", "pytest"])
+    monkeypatch.delenv(RECORD_DIR_ENV, raising=False)
     for name, value in PARSER_ENV.items():
         monkeypatch.setenv(name, value)
     tuning_env_name = "SGLANG_OPT_USE_CUSTOM_ALL_REDUCE_V2"
