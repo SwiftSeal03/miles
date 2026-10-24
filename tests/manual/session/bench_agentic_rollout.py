@@ -37,7 +37,7 @@ NUM_LAYERS = 48
 TOPK = 8
 
 
-def build_args(bench, prompt_path, backend_port):
+def build_args(bench, prompt_path, backend_port, *, apply_chat_template=True):
     from miles.utils.arguments import parse_args
 
     argv = [
@@ -54,7 +54,6 @@ def build_args(bench, prompt_path, backend_port):
         "prompt",
         "--label-key",
         "label",
-        "--apply-chat-template",
         "--rollout-batch-size",
         str(bench.sessions),
         "--n-samples-per-prompt",
@@ -92,6 +91,8 @@ def build_args(bench, prompt_path, backend_port):
         "--pause-generation-mode",
         "in_place",
     ]
+    if apply_chat_template:
+        argv.append("--apply-chat-template")
     with patch.object(sys, "argv", argv):
         args = parse_args()
     args.num_layers = NUM_LAYERS
@@ -143,6 +144,8 @@ def close_http_client():
 
 def run_benchmark(bench):
     import psutil
+
+    from miles.ray.rollout.rollout_executor import _compute_rollout_function_config
 
     from miles.rollout.base_types import RolloutFnConstructorInput, RolloutFnTrainInput
     from miles.rollout.inference_rollout.compatibility import call_rollout_function, load_rollout_function
@@ -212,7 +215,10 @@ def run_benchmark(bench):
                 SessionServerInstance(addr=f"127.0.0.1:{server_port}", instance_id="bench-0")
             ]
             rollout = load_rollout_function(
-                RolloutFnConstructorInput(args=args, data_source=load_function(args.data_source_path)(args)),
+                RolloutFnConstructorInput(
+                    args=_compute_rollout_function_config(args, args.rollout_function_path),
+                    data_source=load_function(args.data_source_path)(args),
+                ),
                 args.rollout_function_path,
             )
             manager = psutil.Process()
@@ -293,7 +299,7 @@ def run_benchmark(bench):
     return {
         "config": vars(bench),
         "resources": resources,
-        "rollout_function": args.rollout_function_path,
+        "rollout_function": args.rollout_function_path.path,
         "steps": results,
         "median_trajectories_per_s": statistics.median(r["trajectories_per_s"] for r in measured),
         "median_manager_cpu_s": statistics.median(r["manager_cpu_s"] for r in measured),

@@ -1,4 +1,8 @@
 from __future__ import annotations
+import os
+from miles.utils.args.runtime import AllConfig, TrainerConfig
+from miles.utils.arguments import parse_args
+
 
 import argparse
 import contextlib
@@ -28,6 +32,7 @@ _RESOLVED_AFTER_PARSING: dict[str, Any] = dict(
     offload_rollout=False,
     eval_uses_snapshots=False,
     starts_inference_engines=True,
+    rollout_sampling_logprobs_mode="selected",
     run_uuid="0" * RUN_UUID_LENGTH,
 )
 
@@ -54,3 +59,69 @@ def parser_defaults() -> dict[str, Any]:
     with _with_relaxed_parser_required_args(parser), patch.object(sys, "argv", ["test"]):
         parsed, _ = parser.parse_known_args([])
     return {**_TRAIN_BACKEND_DEFAULTS, **vars(parsed), **_RESOLVED_AFTER_PARSING}
+
+
+class ConfigNamespace(argparse.Namespace):
+
+    def __iter__(self) -> Iterator[tuple[str, Any]]:
+        return iter(vars(self).items())
+
+
+_COMMON_TEST_ARGV = ['--rollout-batch-size', '2', '--num-rollout', '1', '--actor-num-gpus-per-node', '1', '--micro-batch-size', '1']
+
+
+_MEGATRON_TEST_ARGV = ['--train-backend', 'megatron', *_COMMON_TEST_ARGV, '--num-layers', '1', '--hidden-size', '128', '--num-attention-heads', '2']
+
+
+def parse_megatron_test_config(*argv: str) -> AllConfig:
+    return _parse_test_config([*_MEGATRON_TEST_ARGV, *argv])
+
+
+def _parse_test_config(argv: list[str]) -> AllConfig:
+    environment = {'RANK': '0', 'WORLD_SIZE': '1', 'LOCAL_RANK': '0', 'MILES_SCRIPT_ENV_REPORT': ''}
+    with patch.object(sys, 'argv', ['test', *argv]), patch.dict(os.environ, environment):
+        return parse_args()
+
+
+def make_trainer_args(*, train_backend: str = "megatron", **values: Any) -> ConfigNamespace:
+    from miles.backends.fsdp_utils.config import FsdpArgsNamespace
+    from miles.backends.megatron_utils.megatron_config import MegatronArgsNamespace
+    from miles.backends.torchtitan_utils.args_namespace import TorchtitanArgsNamespace
+    from miles.utils.args.configs.backend_fields import TrainerBackendTraitConfig
+    from miles.utils.args.runtime import TrainerConfig
+
+    values = {**parser_defaults(), **values, "train_backend": train_backend}
+    trainer_fields = TrainerConfig.model_fields.keys() - TrainerBackendTraitConfig.model_fields.keys()
+    backend_cls = {
+        "megatron": MegatronArgsNamespace,
+        "fsdp": FsdpArgsNamespace,
+        "torchtitan": TorchtitanArgsNamespace,
+    }[train_backend]
+    backend = backend_cls(**{name: value for name, value in values.items() if name not in trainer_fields})
+    trainer = {name: value for name, value in values.items() if name in trainer_fields}
+    return ConfigNamespace(**trainer, backend=backend)
+
+
+def parse_fsdp_test_config(*argv: str) -> Any:
+    return _parse_test_config([*['--train-backend', 'fsdp', '--rollout-batch-size', '2', '--num-rollout', '1', '--actor-num-gpus-per-node', '1', '--micro-batch-size', '1'], *argv])
+
+
+_TRAIN_BACKEND_DEFAULTS.update(fp16=False)
+
+
+def make_trainer_config(**values: Any) -> Any:
+    from miles.utils.args.runtime import TrainerConfig
+
+    args = make_trainer_args(**values)
+    return TrainerConfig.model_construct(**vars(args))
+
+
+def resolve_parse_boundary_configs(args: argparse.Namespace) -> argparse.Namespace:
+    from miles.backends.megatron_utils.megatron_config import resolve_megatron_config
+    from miles.backends.sglang_utils.sglang_config import SglangConfig
+    from miles.utils.args.configs.router import RouterConfig
+
+    args.raw_megatron = resolve_megatron_config(args, base_args={})
+    args.sglang = SglangConfig.parse_args(args)
+    vars(args).update(RouterConfig.from_args(args))
+    return args

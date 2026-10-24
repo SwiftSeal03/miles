@@ -8,7 +8,7 @@ import ray
 from ray.util.placement_group import PlacementGroup, placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
-from miles.backends.megatron_utils.megatron_config import MegatronTrainerConfig, compute_trainer_args
+from miles.backends.megatron_utils.megatron_config import MegatronTrainerConfig
 from miles.backends.training_utils.checkpoint.tracker import read_checkpoint_tracker_iteration
 from miles.ray.rollout.inference_controller import UpdatableEngines
 from miles.ray.rollout.router_manager import resolve_router_addrs, wait_session_server_ready
@@ -28,6 +28,8 @@ from miles.ray.specs.train import (
 )
 from miles.ray.train_actor import WeightUpdateOutput
 from miles.ray.wiring import get_backend_capability
+from miles.utils.args.runtime import AllConfig, TrainerConfig
+from miles.utils.args.trainer_utils import compute_trainer_config
 from miles.utils.audit_utils.checksum_utils import (
     ChecksumCollectionFailure,
     InferenceEngineChecksumSnapshot,
@@ -199,12 +201,14 @@ async def take_over_trainers(args, *, handles: dict[str, BaseWorkerHandle]) -> b
 
 
 def _trainer_has_checkpoint(args) -> bool:
-    assert args.megatron_config is None, "a multi policy run's base --load holds no tracker to read"
+    assert not args.raw_megatron.model_ids, "a multi policy run's base --load holds no tracker to read"
     return read_checkpoint_tracker_iteration(args.requested_load) is not None
 
 
 # TODO: move (when reorganizing files)
-async def create_training_model(args, *, handle: BaseWorkerHandle, trainer_id: str, resumed: bool) -> TrainerInfo:
+async def create_training_model(
+    args: TrainerConfig, *, handle: BaseWorkerHandle, trainer_id: str, resumed: bool
+) -> TrainerInfo:
     restored_rollout_ids = await trainer_init_or_load_state(handle, args, trainer_id=trainer_id, resumed=resumed)
     assert len(set(restored_rollout_ids)) == 1, f"trainer {trainer_id!r} restored {restored_rollout_ids}"
     [restored_rollout_id] = set(restored_rollout_ids)
@@ -224,7 +228,7 @@ async def create_training_model(args, *, handle: BaseWorkerHandle, trainer_id: s
 
 # TODO: move (when reorganizing files)
 async def create_training_models(
-    args, rollout_executor: BaseWorkerHandle
+    args: AllConfig, rollout_executor: BaseWorkerHandle
 ) -> tuple[BaseWorkerHandle, BaseWorkerHandle | None]:
     trainer_configs = compute_trainer_configs(args)
     handles = create_trainer_handles(args, trainer_configs=trainer_configs)
@@ -232,7 +236,7 @@ async def create_training_models(
 
     [actor_config] = [config for config in trainer_configs if config.role == ACTOR_ROLE]
     actor_info = await create_training_model(
-        compute_trainer_args(args, actor_config),
+        compute_trainer_config(args, actor_config),
         handle=handles[actor_config.trainer_id],
         trainer_id=actor_config.trainer_id,
         resumed=resumed,
@@ -243,7 +247,7 @@ async def create_training_models(
     if args.use_critic:
         [critic_config] = critic_configs
         critic_info = await create_training_model(
-            compute_trainer_args(args, critic_config),
+            compute_trainer_config(args, critic_config),
             handle=handles[critic_config.trainer_id],
             trainer_id=critic_config.trainer_id,
             resumed=resumed,

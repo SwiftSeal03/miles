@@ -64,7 +64,9 @@ def parse_config_argv(config_cls: type[_ConfigT], argv: list[str] | None) -> _Co
 
 
 def dataclass_to_values(args_obj: object) -> dict[str, object]:
-    return {name: getattr(args_obj, name) for name in _record_field_names(args_obj)}
+    return {
+        name: getattr(args_obj, name) for name in _record_field_names(args_obj)
+    }  # config-access-exempt: attribute selected at runtime from name
 
 
 def render_cli_argv(
@@ -94,7 +96,7 @@ def render_cli_argv(
             (
                 input_values[name]
                 if name in input_values and input_values[name] is not None
-                else getattr(expected_obj, name)
+                else getattr(expected_obj, name)  # config-access-exempt: attribute selected at runtime from name
             ),
         )
     ]
@@ -141,7 +143,7 @@ def _describe_mismatch(parsed: _ArgsT, wanted: _ArgsT, *, uncompared_fields: fro
         f"{name}: parsed {getattr(parsed, name)!r} != wanted {getattr(wanted, name)!r}"
         for name in _record_field_names(wanted)
         if name not in uncompared_fields and getattr(parsed, name) != getattr(wanted, name)
-    )
+    )  # config-access-exempt: attribute selected at runtime from name
 
 
 def _actions_by_dest(parser: argparse.ArgumentParser) -> dict[str, argparse.Action]:
@@ -201,7 +203,7 @@ def _render_action_argv(action: argparse.Action, value: object) -> list[str]:
     if action.nargs in ("*", "+") or isinstance(action.nargs, int):
         if isinstance(value, dict):
             return [flag, *(f"{key}={item}" for key, item in value.items())]
-        return [flag, *(str(item) for item in value)]
+        return [flag, *(json.dumps(item) if isinstance(item, dict) else str(item) for item in value)]
 
     if isinstance(value, dict | list | tuple):
         return [flag, json.dumps(value)]
@@ -246,7 +248,9 @@ def parse_declared_args(text: str, *, parser: argparse.ArgumentParser) -> dict[s
             continue
         assert token in action_by_option_string, f"the argument parser does not declare {token!r}"
         dests.append(action_by_option_string[token].dest)
-    return {dest: getattr(namespace, dest) for dest in dests}
+    return {
+        dest: getattr(namespace, dest) for dest in dests
+    }  # config-access-exempt: attribute selected at runtime from dest
 
 
 def declared_arg_dests(parser: argparse.ArgumentParser) -> frozenset[str]:

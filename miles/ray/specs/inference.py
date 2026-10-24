@@ -2,11 +2,12 @@ import os
 import shlex
 
 from miles.backends.sglang_utils.sglang_api_client import WorkerType
-from miles.backends.sglang_utils.sglang_config import ModelConfig, ServerGroupConfig, resolve_sglang_config
+from miles.backends.sglang_utils.sglang_config import ModelConfig, ServerGroupConfig
 from miles.backends.sglang_utils.sglang_engine import compute_engine_launch_cmd
 from miles.ray.utils import NOSET_VISIBLE_DEVICES_ENV_VARS_LIST
 from miles.rollout.session.config import compute_session_server_config
 from miles.router.backend import make_router_backend
+from miles.utils.args.custom_view import compute_custom_function_config
 from miles.utils.function_registry import load_function
 from miles.utils.workers.argv_utils import config_to_argv, python_argv_prefix
 from miles.utils.workers.backend_capability.base import BackendCapability
@@ -102,7 +103,10 @@ def _create_inference_registration_reporter(args, *, capability: BackendCapabili
 
 
 def compute_engine_provider(args, *, capability: BackendCapability) -> BaseWorkerProvider:
-    return load_function(args.custom_inference_engine_provider_path)(args, capability=capability)
+    path = args.custom_inference_engine_provider_path
+    fn = load_function(path)
+    fn_args = compute_custom_function_config(args, path)
+    return fn(fn_args, capability=capability)
 
 
 def backend_inference_engine_provider(args, *, capability: BackendCapability) -> BaseWorkerProvider:
@@ -110,7 +114,7 @@ def backend_inference_engine_provider(args, *, capability: BackendCapability) ->
 
 
 def compute_router_providers(args, *, capability: BackendCapability) -> list[BaseWorkerProvider]:
-    config = resolve_sglang_config(args)
+    config = args.sglang
     return [
         capability.static_worker_provider(pool_id=compute_router_pool_id(model_idx))
         for model_idx in range(len(config.models))
@@ -142,7 +146,7 @@ def inference_controller_worker_name() -> str:
 
 
 def specs_router(args) -> list[CommandWorkerSpec]:
-    config = resolve_sglang_config(args)  # TODO avoid resolve repeatedly
+    config = args.sglang  # TODO avoid resolve repeatedly
     return [
         _compute_spec_router(args, model_idx=model_idx, model_cfg=model_cfg)
         for model_idx, model_cfg in enumerate(config.models)
@@ -187,7 +191,7 @@ def _compute_router_primary_port_info(args, model_idx: int) -> PortInfo:
 
 
 def spec_session_server(args) -> CommandWorkerSpec:
-    config = resolve_sglang_config(args)  # TODO avoid resolve repeatedly
+    config = args.sglang  # TODO avoid resolve repeatedly
     interpreter_prefix = python_argv_prefix()
 
     def _compute_launch_command(ctx: LaunchCommandContext) -> str:
@@ -240,7 +244,7 @@ def specs_inference_engine(args) -> list[CommandWorkerSpec]:
     if args.rollout_external:
         return []
 
-    config = resolve_sglang_config(args)  # TODO avoid resolve repeatedly
+    config = args.sglang  # TODO avoid resolve repeatedly
 
     return [
         _compute_spec_inference_engine(
@@ -334,7 +338,7 @@ def _compute_spec_inference_engine(
                 static_port=9000,
                 mode="master",
                 allow_dynamic=True,
-                num_consecutive=30 + args.sglang_dp_size,
+                num_consecutive=30 + args.sglang.get_value("dp_size", group=server_group_config),
             ),
             PortInfo(name="nccl", static_port=10000, allow_dynamic=True),
             *(
@@ -355,7 +359,7 @@ def _compute_spec_inference_engine(
             num_gpus_per_engine=server_group_config.num_gpus_per_engine,
             gpu_offset=server_group_config.gpu_offset
             + ctx.cell_index * scheduling.num_workers_per_cell * scheduling.num_gpu_slots_per_worker,
-            sglang_api_key=server_group_config.overrides.get("api_key", args.sglang_api_key),
+            sglang_api_key=args.sglang.get_value("api_key", group=server_group_config),
             needs_offload=server_group_config.needs_offload,
             update_weights=model_cfg.update_weights,
         ),

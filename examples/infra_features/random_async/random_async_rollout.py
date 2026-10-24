@@ -73,7 +73,7 @@ def _decode_routed_experts(args, encoded: str, token_count: int, start_len: int 
     return np.frombuffer(pybase64.b64decode(encoded.encode("ascii")), dtype=np.int32).reshape(
         row_count,
         args.num_layers,
-        args.moe_router_topk,
+        args.raw_megatron.base_args["moe_router_topk"],
     )
 
 
@@ -283,7 +283,7 @@ class AsyncRandomRolloutWorker:
         self._sample_index = 0
         self._group_index = 0
 
-        if args.sglang_enable_metrics:
+        if args.sglang.common_value("enable_metrics"):
             router_url = f"http://{args.sglang_router_ip}:{args.sglang_router_port}"
             self.metrics_reporter = SGLangMetricsReporter(
                 router_url=router_url,

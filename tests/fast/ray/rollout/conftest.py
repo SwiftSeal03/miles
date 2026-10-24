@@ -3,7 +3,7 @@ from __future__ import annotations
 import textwrap
 from argparse import ArgumentParser, Namespace
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, TypeVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -13,6 +13,9 @@ from sglang_router.launch_router import RouterArgs
 from tests.fast.fixtures.args_fixtures import parser_defaults
 
 from miles.utils import object_store
+from miles.utils.args.configs.router import RouterConfig
+from miles.utils.args.custom_function import CustomFunctionConfig
+from miles.utils.args.runtime import AllConfig, InferenceControllerConfig, RolloutConfig
 from miles.utils.types import Sample
 
 
@@ -145,6 +148,7 @@ def make_args(**overrides: Any) -> Namespace:
         seed=42,
         fp16=False,
         use_rollout_indexer_replay=False,
+        rollout_indexer_topk_num_streams=None,
         env_report=None,
         env_report_interval_seconds=3600.0,
         # checkpoint / data source
@@ -386,3 +390,41 @@ def fake_engine(host: str = "10.0.0.1", port_seed: int = 30000) -> MagicMock:
     e._get_free_port_block.remote.side_effect = _alloc
     e._get_node_ip.remote.side_effect = _probe
     return e
+
+
+def make_rollout_config(**overrides: Any) -> RolloutConfig:
+    """The typed config the rollout executor receives, sliced from ``make_args``."""
+    return _slice_config(RolloutConfig, make_args(**overrides))
+
+
+def make_inference_controller_config(args: Namespace) -> InferenceControllerConfig:
+    """The typed config the inference controller receives, sliced from a ``make_args`` namespace."""
+    return _slice_config(InferenceControllerConfig, args)
+
+
+def _slice_config(config_class: type[_LeafConfigT], args: Namespace) -> _LeafConfigT:
+    values = vars(args) | _RESOLVED_ROLLOUT_FIELDS | RouterConfig.from_args(args)
+    for name in _CUSTOM_FUNCTION_FIELDS:
+        if isinstance(path := values[name], str):
+            values[name] = CustomFunctionConfig(path=path)
+    return config_class.model_validate({name: values[name] for name in config_class.model_fields if name in values})
+
+
+_LeafConfigT = TypeVar("_LeafConfigT", RolloutConfig, InferenceControllerConfig)
+
+_RESOLVED_ROLLOUT_FIELDS: dict[str, Any] = dict(
+    ci_enable_metrics_capture=False,
+    eval_datasets=[],
+    ckpt_step=None,
+    num_layers=None,
+    raw_fsdp=None,
+    raw_torchtitan=None,
+    lora_A_init_method="xavier",
+    lora_B_init_method="zero",
+)
+
+_CUSTOM_FUNCTION_FIELDS = [
+    name
+    for name, field in AllConfig.model_fields.items()
+    if field.annotation in {CustomFunctionConfig, CustomFunctionConfig | None}
+]

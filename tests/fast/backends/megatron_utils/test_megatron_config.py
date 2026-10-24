@@ -356,6 +356,13 @@ class TestResolveOverrides:
 
 
 class TestGetMegatronArgParser:
+    @pytest.fixture(autouse=True)
+    def _fresh_parser_cache(self):
+        """A stub-built parser must not leak to other tests through the cache."""
+        megatron_config_module._build_megatron_arg_parser.cache_clear()
+        yield
+        megatron_config_module._build_megatron_arg_parser.cache_clear()
+
     def test_a_parser_that_never_reaches_the_provider_fails_loudly(self, monkeypatch):
         """Silently answering an empty parser would type every override as a string."""
         monkeypatch.setitem(
@@ -366,6 +373,27 @@ class TestGetMegatronArgParser:
 
         with pytest.raises(AssertionError, match="returned without calling the extra args provider"):
             get_megatron_arg_parser()
+
+    def test_the_parser_is_built_once_per_command_line(self, monkeypatch):
+        """A rebuild per call stalls rollout, which resolves the megatron config once per sample."""
+        builds = []
+
+        def parse_args(extra_args_provider):
+            builds.append(sys.argv)
+            extra_args_provider(argparse.ArgumentParser())
+
+        monkeypatch.setitem(
+            sys.modules, "miles.backends.megatron_utils.arguments", SimpleNamespace(parse_args=parse_args)
+        )
+        monkeypatch.setattr(sys, "argv", ["train.py"])
+
+        parser = get_megatron_arg_parser()
+        assert get_megatron_arg_parser() is parser
+        assert len(builds) == 1
+
+        monkeypatch.setattr(sys, "argv", ["train.py", "--num-rollout", "3"])
+        assert get_megatron_arg_parser() is not parser
+        assert len(builds) == 2
 
 
 def _make_checkpoint_args(tmp_path, **overrides) -> Namespace:
@@ -875,7 +903,9 @@ class TestSynthesizedCriticTrainer:
             finetune=True,
         )
 
-        actor, critic = [compute_trainer_args(args, trainer) for trainer in resolve_megatron_config(args).trainers]
+        actor, critic = [
+            compute_trainer_args(args, trainer) for trainer in resolve_megatron_config(args, base_args={}).trainers
+        ]
 
         assert actor.ckpt_step == args.ckpt_step == 7
         assert critic.load == str(critic_load)
@@ -976,3 +1006,27 @@ class TestOverrideWhitelistShape:
         ]
 
         assert misspelled == []
+
+
+class TestTrainerNormalizationBoundary:
+    @pytest.mark.parametrize("role", ["actor", "critic"])
+    @pytest.mark.parametrize("deterministic", [False, True])
+    def test_role_and_collective_settings_are_resolved_without_mutating_run_args(
+        self, role: str, deterministic: bool
+    ) -> None:
+        """Actor initialization receives normalized private values while the launcher retains its inputs."""
+        args = _make_args(
+            use_critic=True,
+            loss_type="policy_loss",
+            debug_deterministic_collective=deterministic,
+            distributed_backend="nccl",
+        )
+        trainer = next(item for item in resolve_megatron_config(args, base_args={}).trainers if item.role == role)
+
+        resolved = compute_trainer_args(args, trainer)
+
+        assert resolved.loss_type == ("value_loss" if role == "critic" else "policy_loss")
+        assert resolved.distributed_backend == ("det_nccl" if deterministic else "nccl")
+        assert args.loss_type == "policy_loss"
+        assert args.distributed_backend == "nccl"
+        assert resolved is not args

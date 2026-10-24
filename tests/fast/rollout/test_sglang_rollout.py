@@ -123,3 +123,23 @@ class TestAbort:
         assert aborted_groups == [[sample]]
         assert sample.metadata["start_rollout_id"] == 23
         assert "Failed to abort worker at http://unresponsive: worker cannot answer" in caplog.text
+
+
+class TestGenerationStateReuse:
+
+    def test_changed_configuration_is_rejected_without_replacing_the_active_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A reused generation singleton cannot silently serve a new configuration with stale state."""
+        monkeypatch.setattr(sglang_rollout.SingletonMeta, '_instances', {})
+        monkeypatch.setattr(sglang_rollout, 'load_tokenizer', lambda *args, **kwargs: object())
+        monkeypatch.setattr(sglang_rollout, 'load_processor', lambda *args, **kwargs: None)
+        args = _make_generate_args()
+        state = sglang_rollout.GenerateState(args)
+        state.remaining_batch_size = 7
+        equal_args = Namespace(**vars(args))
+        changed_args = Namespace(**vars(args) | {'rollout_temperature': args.rollout_temperature + 1})
+        assert sglang_rollout.GenerateState(equal_args) is state
+        with pytest.raises(AssertionError):
+            sglang_rollout.GenerateState(changed_args)
+        assert sglang_rollout.GenerateState(args) is state
+        assert state.remaining_batch_size == 7
+        assert state.sampling_params['temperature'] == args.rollout_temperature

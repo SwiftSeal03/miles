@@ -57,7 +57,9 @@ def test_the_tail_keeps_the_last_lines_and_drops_blank_ones():
     assert len(_failure_tail(deque([b"l\n" * 500])).splitlines()) <= FAILURE_TAIL_LINES
 
 
-def test_a_failing_test_explains_itself_inside_the_notifier_window(tmp_path, monkeypatch, caplog):
+def test_a_failing_test_explains_itself_inside_the_notifier_window(
+    tmp_path, monkeypatch, caplog, ci_snapshot_environment
+):
     Path(tmp_path / "test_boom.py").write_text(
         "for index in range(5000):\n"
         "    print(f'noise {index}')\n"
@@ -65,7 +67,9 @@ def test_a_failing_test_explains_itself_inside_the_notifier_window(tmp_path, mon
     )
     monkeypatch.chdir(tmp_path)
     with caplog.at_level(logging.INFO):
-        run_unittest_files([CITestFile(name="test_boom.py")], timeout_per_file=120, continue_on_error=True)
+        run_unittest_files(
+            [CITestFile(name="test_boom.py")], snapshot_hardware="cpu", timeout_per_file=120, continue_on_error=True
+        )
     assert "FAILED: test_boom.py returned exit code 1" in caplog.text
     _, separator, summary = caplog.text.rpartition("\nFAILED:\n")
     assert separator, "the runner printed no failure summary"

@@ -215,7 +215,9 @@ class TestSummarySuffixOrder:
 
 
 class TestIntegrationStatusMatrix:
-    def test_three_statuses_emit_complete_marker_quartet(self, tmp_path: Path, monkeypatch, capfd):
+    def test_three_statuses_emit_complete_marker_quartet(
+        self, tmp_path: Path, monkeypatch, capfd, ci_snapshot_environment
+    ):
         monkeypatch.setenv("GITHUB_ACTIONS", "true")
         monkeypatch.chdir(tmp_path)
 
@@ -255,6 +257,7 @@ class TestIntegrationStatusMatrix:
 
         rc = run_unittest_files(
             files,
+            snapshot_hardware="cpu",
             timeout_per_file=2,
             continue_on_error=True,
             enable_retry=False,
@@ -337,7 +340,7 @@ class TestIntegrationStatusMatrix:
 
 
 class TestIntegrationTimeoutClosesGroup:
-    def test_timeout_summary_includes_timeout_after(self, tmp_path: Path, monkeypatch, capfd):
+    def test_timeout_summary_includes_timeout_after(self, tmp_path: Path, monkeypatch, capfd, ci_snapshot_environment):
         monkeypatch.setenv("GITHUB_ACTIONS", "true")
         monkeypatch.chdir(tmp_path)
 
@@ -354,6 +357,7 @@ class TestIntegrationTimeoutClosesGroup:
 
         rc = run_unittest_files(
             files,
+            snapshot_hardware="cpu",
             timeout_per_file=2,
             continue_on_error=False,
             enable_retry=False,
@@ -383,7 +387,9 @@ class TestIntegrationTimeoutClosesGroup:
 
 
 class TestIntegrationRetryFailThenPass:
-    def test_retry_emits_two_complete_marker_triples(self, tmp_path: Path, monkeypatch, capfd):
+    def test_retry_emits_two_complete_marker_triples(
+        self, tmp_path: Path, monkeypatch, capfd, ci_snapshot_environment
+    ):
         monkeypatch.setenv("GITHUB_ACTIONS", "true")
         monkeypatch.chdir(tmp_path)
 
@@ -412,6 +418,7 @@ class TestIntegrationRetryFailThenPass:
 
         rc = run_unittest_files(
             files,
+            snapshot_hardware="cpu",
             timeout_per_file=10,
             continue_on_error=False,
             enable_retry=True,
@@ -451,7 +458,9 @@ class TestIntegrationRetryFailThenPass:
 
 
 class TestIntegrationBaselineLocalMode:
-    def test_no_marker_lines_in_stdout_when_actions_unset(self, tmp_path: Path, monkeypatch, capfd):
+    def test_no_marker_lines_in_stdout_when_actions_unset(
+        self, tmp_path: Path, monkeypatch, capfd, ci_snapshot_environment
+    ):
         # Whatever non-`true` value GITHUB_ACTIONS holds, none of the
         # marker emit helpers should produce output, and parent-side
         # stdout must therefore contain only what was already there
@@ -481,6 +490,7 @@ class TestIntegrationBaselineLocalMode:
 
         rc = run_unittest_files(
             files,
+            snapshot_hardware="cpu",
             timeout_per_file=10,
             continue_on_error=True,
             enable_retry=False,
@@ -498,7 +508,7 @@ class TestIntegrationBaselineLocalMode:
         assert "BASELINE_A" in out
         assert "BASELINE_B" in out
 
-    def test_explicit_false_also_suppresses_markers(self, tmp_path: Path, monkeypatch, capfd):
+    def test_explicit_false_also_suppresses_markers(self, tmp_path: Path, monkeypatch, capfd, ci_snapshot_environment):
         monkeypatch.setenv("GITHUB_ACTIONS", "false")
         monkeypatch.chdir(tmp_path)
 
@@ -513,6 +523,7 @@ class TestIntegrationBaselineLocalMode:
 
         rc = run_unittest_files(
             files,
+            snapshot_hardware="cpu",
             timeout_per_file=10,
             continue_on_error=True,
             enable_retry=False,

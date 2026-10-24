@@ -29,6 +29,9 @@ from miles.rollout.checkpoint_eval import CheckpointEvalFn, EvalSkip
 from miles.rollout.fully_async_data_buffer import Group
 from miles.rollout.inference_rollout.compatibility import load_rollout_function
 from miles.utils import object_store
+from miles.utils.args.custom_function import CustomFunctionConfig
+from miles.utils.args.custom_view import ImmutableNamespace, compute_custom_function_config
+from miles.utils.args.runtime_base import BaseLeafConfig
 from miles.utils.async_utils import maybe_await
 from miles.utils.audit_utils.event_analyzer import analyzer as event_analyzer
 from miles.utils.audit_utils.event_logger import checkpoint as event_logger_checkpoint
@@ -104,7 +107,8 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
         init_http_client(args)
 
         data_source_cls = load_function(self.args.data_source_path)
-        self.data_source = data_source_cls(args)
+        fn_args = compute_custom_function_config(args, self.args.data_source_path)
+        self.data_source = data_source_cls(fn_args)
         SampleOwnershipRecorder.install(
             args=args,
             data_source=self.data_source,
@@ -117,14 +121,17 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
                 self.generate_rollout = None
                 self.eval_generate_rollout = None
             else:
-                input = RolloutFnConstructorInput(args=args, data_source=self.data_source)
-                self.generate_rollout = load_rollout_function(input, self.args.rollout_function_path)
+                fn_args = _compute_rollout_function_config(args, self.args.rollout_function_path)
+                rollout_input = RolloutFnConstructorInput(args=fn_args, data_source=self.data_source)
+                self.generate_rollout = load_rollout_function(rollout_input, self.args.rollout_function_path)
                 if self.args.eval_function_path == self.args.rollout_function_path:
                     # Reuse the instance so train and eval share one state (and stateful
                     # rollout fns like FullyAsyncRolloutFn are not constructed twice).
                     self.eval_generate_rollout = self.generate_rollout
                 else:
-                    self.eval_generate_rollout = load_rollout_function(input, self.args.eval_function_path)
+                    fn_args = _compute_rollout_function_config(args, self.args.eval_function_path)
+                    eval_input = RolloutFnConstructorInput(args=fn_args, data_source=self.data_source)
+                    self.eval_generate_rollout = load_rollout_function(eval_input, self.args.eval_function_path)
         else:
             self.generate_rollout = load_function(self.args.rollout_function_path)
             self.eval_generate_rollout = load_function(self.args.eval_function_path)
@@ -155,7 +162,9 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
 
         if not self.use_legacy_rollout_v1 and self.generate_rollout is not None:
             await maybe_await(self.generate_rollout.dispose())
-        if (close := getattr(self.data_source, "close", None)) is not None:
+        if (
+            close := getattr(self.data_source, "close", None)
+        ) is not None:  # config-access-exempt: custom data sources may omit this lifecycle method
             close()
         event_analyzer.run_sample_ownership_analysis(args=self.args)
         event_analyzer.run_analysis_from_args(self.args)
@@ -210,7 +219,9 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
         assert_weight_version_is_published(
             self.args, rollouts_since_publish=self._rollouts_since_publish_of_model_id[trainer_model_id]
         )
-        if (get_buffer_length := getattr(self.data_source, "get_buffer_length", None)) is not None:
+        if (
+            get_buffer_length := getattr(self.data_source, "get_buffer_length", None)
+        ) is not None:  # config-access-exempt: custom data sources may omit this lifecycle method
             dashboard_hooks.report_data_buffer(get_buffer_length())
         with timer("rollout" if trainer_model_id is None else f"{trainer_model_id}/rollout"):
             data, metadata, metrics = await self._get_rollout_data(
@@ -249,10 +260,11 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
             if not self.use_legacy_rollout_v1:
                 result = await maybe_await(self.eval_generate_rollout(RolloutFnEvalInput(rollout_id=rollout_id)))
             else:
+                fn_args = _compute_rollout_function_config(self.args, self.args.eval_function_path)
                 result = await asyncio.to_thread(
                     call_rollout_fn,
                     self.eval_generate_rollout,
-                    self.args,
+                    fn_args,
                     rollout_id,
                     self.data_source,
                     evaluation=True,
@@ -330,8 +342,9 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
                 )
                 data = await maybe_await(self.generate_rollout(input))
             else:
+                fn_args = _compute_rollout_function_config(self.args, self.args.rollout_function_path)
                 data = await asyncio.to_thread(
-                    call_rollout_fn, self.generate_rollout, self.args, rollout_id, self.data_source, evaluation=False
+                    call_rollout_fn, self.generate_rollout, fn_args, rollout_id, self.data_source, evaluation=False
                 )
             metrics = data.metrics
             data = data.samples
@@ -420,8 +433,9 @@ class RolloutExecutor(DedicatedRpcLoopWorker):
             self._eval_fleet = None
             return
 
+        fn_args = _compute_rollout_function_config(self.args, self.args.eval_function_path)
         self._eval_fleet = RolloutExecutorEvalFleet(
-            self.args, info=eval_fleet_info, inference_controller_provider=self._inference_controller_provider
+            fn_args, info=eval_fleet_info, inference_controller_provider=self._inference_controller_provider
         )
 
 
@@ -430,6 +444,19 @@ def compute_rollout_checkpoint_dir(directory: str | Path, *, rollout_id: int) ->
 
 
 _T = TypeVar("_T")
+
+
+def _compute_rollout_function_config(args: BaseLeafConfig, function: CustomFunctionConfig) -> ImmutableNamespace:
+    return compute_custom_function_config(
+        args,
+        function,
+        nested_functions=(
+            args.custom_generate_function_path,
+            args.custom_agent_function_path,
+            args.custom_rm_path,
+            *(dataset.custom_generate_function_path for dataset in args.eval_datasets),
+        ),
+    )
 
 
 def _single_or_none(xs: Iterable[_T]) -> _T | None:

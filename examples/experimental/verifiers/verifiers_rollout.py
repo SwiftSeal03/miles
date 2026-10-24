@@ -40,6 +40,7 @@ from miles.rollout.base_types import (
 from miles.rollout.filter_hub.base_types import MetricGatherer
 from miles.rollout.filter_hub.common_filters import apply_preput_filters
 from miles.rollout.generate_utils.prefill_logprobs import recompute_samples_rollout_logprobs_via_prefill
+from miles.utils.args.custom_view import ImmutableNamespace
 from miles.utils.lora.utils import LORA_ADAPTER_NAME, is_lora_enabled
 from miles.utils.types import Sample
 
@@ -166,7 +167,13 @@ def _train_client(
     *,
     router_args: Namespace | None = None,
 ):
-    tokenizer_source = getattr(args, "sglang_tokenizer_path", None) or model
+    sglang_config = args.sglang
+    if sglang_config.models:
+        generation_model = next(
+            (item for item in sglang_config.models if item.name == "default"), sglang_config.models[0]
+        )
+        sglang_config = sglang_config.model_copy(update={"models": [generation_model]})
+    tokenizer_source = sglang_config.common_value("tokenizer_path") or model
     identity = _renderer_identity(model) or _renderer_identity(tokenizer_source)
 
     # TrainClient uses one path for both tokenizer loading and renderer lookup.
@@ -537,8 +544,8 @@ def _flatten_samples(values: Iterable[Any]) -> list[Sample]:
     return flattened
 
 
-def _make_eval_args(args: Namespace) -> Namespace:
-    eval_args = Namespace(**vars(args))
+def _make_eval_args(args: ImmutableNamespace) -> Namespace:
+    eval_args = Namespace(**dict(args))
     for eval_name, rollout_name in (
         ("eval_temperature", "rollout_temperature"),
         ("eval_top_p", "rollout_top_p"),
@@ -549,7 +556,6 @@ def _make_eval_args(args: Namespace) -> Namespace:
         if (value := getattr(args, eval_name, None)) is not None:
             setattr(eval_args, rollout_name, value)
     eval_args.rollout_max_prompt_len = args.eval_max_prompt_len
-    eval_args.rollout_min_new_tokens = args.eval_min_new_tokens
     eval_args.reward_key = args.eval_reward_key or args.reward_key
     return eval_args
 
@@ -624,9 +630,11 @@ class VerifiersRolloutFn(BaseRolloutFn):
 
         self.env = runtime.Environment(self.config)
         self.model = self.args.hf_checkpoint
-        self.sampling = self._sampling_config(runtime.SamplingConfig, self.args)
+        self.sampling = self._sampling_config(runtime.SamplingConfig, self.args, min_tokens=None)
         self.eval_args = _make_eval_args(self.args)
-        self.eval_sampling = self._sampling_config(runtime.SamplingConfig, self.eval_args)
+        self.eval_sampling = self._sampling_config(
+            runtime.SamplingConfig, self.eval_args, min_tokens=self.args.eval_min_new_tokens
+        )
 
         engine_count = self.args.rollout_num_gpus // self.args.rollout_num_gpus_per_engine
         self.max_concurrent = self.args.sglang_server_concurrency * engine_count
@@ -656,7 +664,7 @@ class VerifiersRolloutFn(BaseRolloutFn):
         self._next_sample_index = 0
 
     @staticmethod
-    def _sampling_config(SamplingConfig, args: Namespace):
+    def _sampling_config(SamplingConfig: Any, args: Namespace | ImmutableNamespace, *, min_tokens: int | None) -> Any:
         data: dict[str, Any] = {
             "temperature": args.rollout_temperature,
             "top_p": args.rollout_top_p,
@@ -664,7 +672,7 @@ class VerifiersRolloutFn(BaseRolloutFn):
         }
         if args.rollout_top_k is not None:
             data["top_k"] = args.rollout_top_k
-        if (min_tokens := getattr(args, "rollout_min_new_tokens", None)) is not None:
+        if min_tokens is not None:
             data["min_tokens"] = min_tokens
         if args.apply_chat_template_kwargs:
             data["extra_body"] = {"chat_template_kwargs": args.apply_chat_template_kwargs}
@@ -680,7 +688,7 @@ class VerifiersRolloutFn(BaseRolloutFn):
         runtime = _import_verifiers()
         ctx = ctx or self.ctx
         episode = self.env.episode(task, ctx, n=n)
-        if getattr(self.args, "sglang_enable_deterministic_inference", False):
+        if self.args.sglang.common_value("enable_deterministic_inference"):
             for offset, rollout in enumerate(episode.rollouts):
                 sampling = ctx.sampling.model_copy(update={"sampling_seed": seed_base + offset})
                 rollout.ctx = runtime.ModelContext(client=ctx.client, model=self.model, sampling=sampling)
