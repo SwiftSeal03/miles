@@ -68,6 +68,6 @@ def compute_session_server_config(
         rollout_sampling_logprobs_mode=args.rollout_sampling_logprobs_mode,
         rollout_temperature=getattr(args, "rollout_temperature", 1.0),
         output_store_backend_config=(
-            output_store_backend_config(args) if getattr(args, "use_output_store", False) else None
+            output_store_backend_config(args, deletes_only=True) if getattr(args, "use_output_store", False) else None
         ),
     )
