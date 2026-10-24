@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import argparse
 import re
 import sys
@@ -903,7 +905,9 @@ class TestSynthesizedCriticTrainer:
             finetune=True,
         )
 
-        actor, critic = [compute_trainer_args(args, trainer) for trainer in resolve_megatron_config(args).trainers]
+        actor, critic = [
+            compute_trainer_args(args, trainer) for trainer in resolve_megatron_config(args, base_args={}).trainers
+        ]
 
         assert actor.ckpt_step == args.ckpt_step == 7
         assert critic.load == str(critic_load)
@@ -1004,3 +1008,45 @@ class TestOverrideWhitelistShape:
         ]
 
         assert misspelled == []
+
+
+class TestTrainerNormalizationBoundary:
+    @pytest.mark.parametrize("role", ["actor", "critic"])
+    @pytest.mark.parametrize("deterministic", [False, True])
+    def test_role_and_collective_settings_are_resolved_without_mutating_run_args(
+        self, role: str, deterministic: bool
+    ) -> None:
+        """Actor initialization receives normalized private values while the launcher retains its inputs."""
+        args = _make_args(
+            use_critic=True,
+            loss_type="policy_loss",
+            debug_deterministic_collective=deterministic,
+            distributed_backend="nccl",
+        )
+        trainer = next(item for item in resolve_megatron_config(args, base_args={}).trainers if item.role == role)
+
+        resolved = compute_trainer_args(args, trainer)
+
+        assert resolved.loss_type == ("value_loss" if role == "critic" else "policy_loss")
+        assert resolved.distributed_backend == ("det_nccl" if deterministic else "nccl")
+        assert args.loss_type == "policy_loss"
+        assert args.distributed_backend == "nccl"
+        assert resolved is not args
+
+
+class TestTrainerActorIndices:
+    @pytest.mark.parametrize("use_critic", [False, True])
+    def test_actor_indices_are_contiguous_and_critics_do_not_consume_indices(
+        self, tmp_path: Path, use_critic: bool
+    ) -> None:
+        """Critics inherit policy identity without consuming an actor placement index."""
+        policies = [{"model_id": "a"}] if use_critic else [{"model_id": "a"}, {"model_id": "b"}]
+        path = _write_yaml({"trainers": policies}, tmp_path)
+        args = _make_args(path, use_critic=use_critic)
+        config = resolve_megatron_config(args, base_args={})
+        expected = [("a", "actor", 0), ("a", "critic", None)] if use_critic else [("a", "actor", 0), ("b", "actor", 1)]
+
+        assert [(trainer.model_id, trainer.role, trainer.actor_index) for trainer in config.trainers] == expected
+        for trainer in config.trainers:
+            resolved = compute_trainer_args(args, trainer)
+            assert resolved.trainer_actor_index == trainer.actor_index

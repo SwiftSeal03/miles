@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 import yaml
-from tests.fast.launch_scripts.sh_harness import REPO_ROOT, assert_matches_snapshot, sanitize
+from tests.fast.launch_scripts.sh_harness import REPO_ROOT, sanitize
 
 from miles.ray.specs.inference import POOL_CATEGORY_INFERENCE_ENGINE
 from miles.ray.specs.train import POOL_CATEGORY_TRAINER_ENGINE
@@ -17,9 +17,15 @@ from miles.utils.external_utils.command_utils.helm_backend import naming
 from miles.utils.external_utils.command_utils.helm_backend.launcher import command_wrapper, entrypoint
 from miles.utils.external_utils.command_utils.helm_backend.launcher.command_wrapper import Helm
 from miles.utils.external_utils.command_utils.helm_backend.launcher.values.misc import MooncakeInfo
-from miles.utils.workers.worker_spec import CommandWorkerSpec, PortInfo, SchedulingSpec, ServeWorkerSpec
+from miles.utils.test_utils.snapshot import (
+    SNAPSHOT_DIRECTORY,
+    SNAPSHOT_RECORD_DIR_ENV_VAR,
+    SNAPSHOT_UPDATE_ENV_VAR,
+    assert_matches_snapshot,
+)
+from miles.utils.workers.worker_spec import BaseCommandSpec, BaseServeSpec, PortInfo, SchedulingSpec
 
-SNAPSHOT_DIR = REPO_ROOT / "tests" / "snapshots" / "helm_backend"
+SNAPSHOT_DIR = REPO_ROOT / SNAPSHOT_DIRECTORY / "helm_backend"
 
 FROZEN_RUN_ID = "260101-000000-000"
 FROZEN_LAUNCH_TOKEN = "260101-000000-000001"
@@ -28,8 +34,8 @@ NAMESPACE = "rl"
 PYTHON_PLACEHOLDER = "<PYTHON>"
 
 
-def _router() -> CommandWorkerSpec:
-    return CommandWorkerSpec(
+def _router() -> BaseCommandSpec:
+    return BaseCommandSpec(
         name="inference-router-0",
         port_infos=[PortInfo(name="primary", static_port=30000)],
         env_var=lambda ctx: {},
@@ -40,8 +46,8 @@ def _router() -> CommandWorkerSpec:
     )
 
 
-def _engine() -> CommandWorkerSpec:
-    return CommandWorkerSpec(
+def _engine() -> BaseCommandSpec:
+    return BaseCommandSpec(
         name="inference-engine-0-0",
         category=POOL_CATEGORY_INFERENCE_ENGINE,
         port_infos=[
@@ -63,8 +69,8 @@ def _engine() -> CommandWorkerSpec:
     )
 
 
-def _trainer() -> ServeWorkerSpec:
-    return ServeWorkerSpec(
+def _trainer() -> BaseServeSpec:
+    return BaseServeSpec(
         name="trainer-engine-actor",
         category=POOL_CATEGORY_TRAINER_ENGINE,
         port_infos=[PortInfo(name="master", static_port=9000, mode="master")],
@@ -148,12 +154,15 @@ def record_launch(monkeypatch, sandbox: Path, on_compute_specs=None, **request_o
 
     _stub_launch_inputs(monkeypatch, specs=[_router(), _engine(), _trainer()], on_compute_specs=on_compute_specs)
 
-    entrypoint.execute_train(
-        request=_request(**request_overrides),
-        config=ExecuteTrainConfig(
-            namespace=NAMESPACE, run_id=FROZEN_RUN_ID, helm_values=(str(helm_values_file(sandbox)),)
-        ),
-    )
+    with monkeypatch.context() as launch_env:
+        launch_env.setenv(SNAPSHOT_UPDATE_ENV_VAR, "")
+        launch_env.setenv(SNAPSHOT_RECORD_DIR_ENV_VAR, "")
+        entrypoint.execute_train(
+            request=_request(**request_overrides),
+            config=ExecuteTrainConfig(
+                namespace=NAMESPACE, run_id=FROZEN_RUN_ID, helm_values=(str(helm_values_file(sandbox)),)
+            ),
+        )
     return recorded
 
 

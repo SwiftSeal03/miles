@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import types
+from pathlib import Path
 from unittest.mock import patch
 
 
@@ -285,3 +286,26 @@ class TestCollectEnvReport:
         parsed = json.loads(report.model_dump_json())
         assert parsed["editable_packages"][0]["name"] == "miles"
         assert parsed["process"]["args"]["skipped_names"] == ["model"]
+
+
+class TestLauncherReportSelection:
+    def test_worker_uses_environment_report_when_cli_path_is_empty(self, tmp_path: Path) -> None:
+        """Workers recover launcher metadata from their pod environment without a duplicated CLI field."""
+        path = tmp_path / "pod-launch.json"
+        path.write_text('{"source": "pod"}')
+        with patch.dict(os.environ, {LAUNCHER_REPORT_ENV_VAR: str(path)}):
+            snapshot = collect_env_report_snapshot(make_args(env_report=""))
+
+        assert snapshot.facts.launcher_env_report == {"source": "pod"}
+        assert LAUNCHER_REPORT_ENV_VAR not in snapshot.facts.env_vars
+
+    def test_explicit_report_path_takes_precedence_over_environment(self, tmp_path: Path) -> None:
+        """An explicitly selected launch report cannot be replaced by a stale inherited pod report."""
+        explicit = tmp_path / "explicit.json"
+        inherited = tmp_path / "inherited.json"
+        explicit.write_text('{"source": "explicit"}')
+        inherited.write_text('{"source": "inherited"}')
+        with patch.dict(os.environ, {LAUNCHER_REPORT_ENV_VAR: str(inherited)}):
+            snapshot = collect_env_report_snapshot(make_args(env_report=str(explicit)))
+
+        assert snapshot.facts.launcher_env_report == {"source": "explicit"}

@@ -460,6 +460,7 @@ def _actor_train_args(**overrides):
 
 def _actor_reuse_worker(actor_module, **args_overrides):
     worker = object.__new__(actor_module.MegatronTrainRayActor)
+    worker._config_snapshot_train_recorded = True
     worker.args = _actor_train_args(use_critic=False, **args_overrides)
     worker.model = [object()]
     worker.optimizer = object()
@@ -683,6 +684,7 @@ def _patch_shared_train_helpers(actor_module: Any, monkeypatch: pytest.MonkeyPat
 
 def _critic_worker(actor_module: Any) -> Any:
     worker = object.__new__(actor_module.MegatronTrainRayActor)
+    worker._config_snapshot_train_recorded = True
     worker.args = Namespace(global_batch_size=1, loss_type=None)
     worker.role = "critic"
     worker.model = object()
@@ -694,6 +696,7 @@ def _critic_worker(actor_module: Any) -> Any:
 
 def _actor_worker(actor_module: Any) -> Any:
     worker = object.__new__(actor_module.MegatronTrainRayActor)
+    worker._config_snapshot_train_recorded = True
     worker.args = Namespace(
         colocate=True,
         compute_advantages_and_returns=True,

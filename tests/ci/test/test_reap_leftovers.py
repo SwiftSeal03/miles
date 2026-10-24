@@ -130,24 +130,26 @@ class TestReapLeakedAcceleratorProcesses:
         assert not [record for record in caplog.records if "still alive" in record.message]
 
     def test_running_test_files_does_not_reap_unless_asked(
-        self, monkeypatch: pytest.MonkeyPatch, one_passing_file: list[ci_utils.TestFile]
+        self, monkeypatch: pytest.MonkeyPatch, one_passing_file: list[ci_utils.TestFile], ci_snapshot_environment: None
     ) -> None:
         """Reaping is process-wide, so a run_unittest_files caller that is itself a test would be
         killed by its own reaper; only the CUDA suite runner opts in."""
         calls = _count_reaps(monkeypatch)
 
-        ci_utils.run_unittest_files(one_passing_file, timeout_per_file=30)
+        ci_utils.run_unittest_files(one_passing_file, snapshot_hardware="cpu", timeout_per_file=30)
 
         assert calls == []
 
     def test_running_test_files_reaps_before_a_file_when_asked(
-        self, monkeypatch: pytest.MonkeyPatch, one_passing_file: list[ci_utils.TestFile]
+        self, monkeypatch: pytest.MonkeyPatch, one_passing_file: list[ci_utils.TestFile], ci_snapshot_environment: None
     ) -> None:
         """Without this the CUDA suite is back to starting every file on whatever the previous one
         left holding the accelerators."""
         calls = _count_reaps(monkeypatch)
 
-        ci_utils.run_unittest_files(one_passing_file, timeout_per_file=30, reap_leftovers=True)
+        ci_utils.run_unittest_files(
+            one_passing_file, snapshot_hardware="cpu", timeout_per_file=30, reap_leftovers=True
+        )
 
         assert calls == ["reaped"]
 

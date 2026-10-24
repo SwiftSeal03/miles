@@ -12,6 +12,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 
 from tests.ci.ci_register import CIRegistry, HWBackend, file_timeout
 from tests.ci.metric_history import (
@@ -437,6 +438,7 @@ def run_unittest_files(
     retry_wait_seconds: int = 60,
     gate_store=None,
     gate_executing_suite: str = "",
+    snapshot_hardware: str | None = None,
     gate_write_baseline: bool = False,
     gate_provenance: RunProvenance | None = None,
     reap_leftovers: bool = False,
@@ -463,6 +465,10 @@ def run_unittest_files(
                     attempt. Off by default because reaping is process-wide: it would
                     also reach the caller when this function runs inside a test.
     """
+    from miles.utils.audit_utils.config_snapshot.models import ConfigSnapshotVariant
+    from miles.utils.audit_utils.config_snapshot.runner import ConfigSnapshotMismatch, ConfigSnapshotTestRunner
+    from miles.utils.test_utils.snapshot import SNAPSHOT_RECORD_DIR_ENV_VAR
+
     tic = time.perf_counter()
     success = True
     passed_tests = []
@@ -481,7 +487,14 @@ def run_unittest_files(
         output_lines = []
         output_tail: deque = deque(maxlen=FAILURE_TAIL_LINES * 8)
 
-        def run_one_file(filename, capture_output=False, record_dir=None, _i=i, _estimated_time=estimated_time):
+        def run_one_file(
+            filename: str,
+            capture_output: bool = False,
+            record_dir: str | None = None,
+            _i: int = i,
+            _estimated_time: float = estimated_time,
+            env: dict[str, str] | None = None,
+        ) -> int:
             nonlocal process, output_lines, output_tail
             output_tail = deque(maxlen=FAILURE_TAIL_LINES * 8)
 
@@ -489,11 +502,10 @@ def run_unittest_files(
             logger.info(f".\n.\nBegin ({_i}/{len(files) - 1}):\npython3 {full_path}\n.\n.\n")
             file_tic = time.perf_counter()
 
-            child_env = None
+            child_env = (os.environ if env is None else env).copy()
             if record_dir is not None:
                 # Point the training process at this attempt's own record dir.
                 os.makedirs(record_dir, exist_ok=True)
-                child_env = os.environ.copy()
                 child_env[CI_GATE_RECORD_DIR_ENV] = record_dir
 
             if capture_output:
@@ -563,12 +575,37 @@ def run_unittest_files(
 
             try:
                 try:
+                    snapshot_runner = (
+                        ConfigSnapshotTestRunner.create(
+                            test=filename,
+                            repo_root=Path(__file__).resolve().parents[2],
+                            variant=ConfigSnapshotVariant(
+                                hardware=snapshot_hardware,
+                                wandb_available=bool(os.environ.get("WANDB_API_KEY")),
+                            ),
+                        )
+                        if os.environ.get(SNAPSHOT_RECORD_DIR_ENV_VAR)
+                        else None
+                    )
                     ret_code = run_with_timeout(
                         run_one_file,
                         args=(filename,),
-                        kwargs={"capture_output": enable_retry, "record_dir": attempt_record_dir},
+                        kwargs={
+                            "capture_output": enable_retry,
+                            "record_dir": attempt_record_dir,
+                            "env": {
+                                **os.environ,
+                                **(
+                                    {SNAPSHOT_RECORD_DIR_ENV_VAR: str(snapshot_runner.record_directory)}
+                                    if snapshot_runner is not None
+                                    else {}
+                                ),
+                            },
+                        },
                         timeout=effective_timeout,
                     )
+                    if snapshot_runner is not None:
+                        snapshot_runner.finish(returncode=ret_code)
                     attempt_elapsed = time.perf_counter() - attempt_tic
 
                     if ret_code == 0:
@@ -627,6 +664,14 @@ def run_unittest_files(
                         failed_tests.append((filename, f"exit code {ret_code}", _failure_tail(output_tail)))
                         break
 
+                except ConfigSnapshotMismatch as error:
+                    attempt_elapsed = time.perf_counter() - attempt_tic
+                    attempt_status = "FAIL"
+                    attempt_exit_code = 1
+                    failed_tests.append((filename, "snapshot mismatch", str(error)))
+                    if was_retried:
+                        retried_tests.append((filename, attempt, "failed"))
+                    break
                 except TimeoutError:
                     attempt_elapsed = time.perf_counter() - attempt_tic
                     attempt_status = "TIMEOUT"
