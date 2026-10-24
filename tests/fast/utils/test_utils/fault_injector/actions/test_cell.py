@@ -97,7 +97,7 @@ class TestRestartRolloutCell:
                 cell_operations=lambda: operations,
                 static_worker_provider=lambda **kwargs: SimpleNamespace(get_handle=lambda name: controller),
             )
-            monkeypatch.setattr(wiring, "get_backend_capability", lambda args: capability)
+            monkeypatch.setattr(wiring, "compute_backend_capability", lambda args: capability)
             args = SimpleNamespace(
                 update_weights_interval=1,
                 ft_components=("rollout",),

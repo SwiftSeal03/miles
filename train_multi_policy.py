@@ -31,14 +31,16 @@ logger = logging.getLogger(__name__)
 async def train_multi_policy(args, *, disposer: Disposer) -> None:
     megatron_config = args.raw_megatron
     validate_multi_policy_args(args, megatron_config=megatron_config)
-    _worker_manager = init_orchestration_script(args, disposer=disposer)
+    capability = init_orchestration_script(args, disposer=disposer)
 
     define_policy_metric_groups(megatron_config)
 
-    inference_controller, rollout_executor, num_rollout_per_epoch = await create_rollout_components(args)
+    inference_controller, rollout_executor, num_rollout_per_epoch = await create_rollout_components(
+        args, capability=capability
+    )
     disposer.add(inference_controller, rollout_executor)
 
-    trainers = await create_trainers(args, rollout_executor=rollout_executor)
+    trainers = await create_trainers(args, rollout_executor=rollout_executor, capability=capability)
     for trainer in trainers.values():
         disposer.add(trainer.handle)
     assert_consistent_restore(args, trainers=trainers, leader_model_id=megatron_config.leader_model_id)
@@ -50,6 +52,7 @@ async def train_multi_policy(args, *, disposer: Disposer) -> None:
             for trainer_config in compute_trainer_configs(args)
         },
         inference_controller=inference_controller,
+        capability=capability,
     )
     disposer.add(api_server)
     maybe_start_mini_ft_controller(args)

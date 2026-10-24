@@ -1,3 +1,4 @@
+from miles.backends.sglang_utils.sglang_scaling_config import SglangScalingConfig
 from miles.ray.specs.inference import POOL_CATEGORY_INFERENCE_ENGINE
 from miles.ray.specs.train import POOL_CATEGORY_TRAINER_ENGINE
 from miles.utils.args.configs.scaling import ScalingConfig
@@ -98,7 +99,7 @@ def session_client() -> BaseCommandSpec:
     )
 
 
-SCALING = ScalingConfig.model_construct()
+SCALING = ScalingConfig(sglang_scaling=SglangScalingConfig(groups={}))
 
 
 def build_values_as_launched(

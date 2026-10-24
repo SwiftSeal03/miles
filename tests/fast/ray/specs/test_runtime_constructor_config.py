@@ -74,6 +74,7 @@ class TestRuntimeConstructorConfig:
 
         kwargs = spec.ctor_kwargs(context)
 
+        assert kwargs["args"] is runtime
         assert kwargs["deployment_identity"].trainer_id == "runtime-actor"
         assert kwargs["deployment_identity"].run_uuid == "runtime-run"
         assert capability.requested_pool_ids == [["trainer-engine-runtime-actor"]]

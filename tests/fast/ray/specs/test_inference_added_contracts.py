@@ -16,7 +16,7 @@ def _interpreter_without_runner_flags(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _make_args(**overrides: object) -> Namespace:
     args = make_args(**overrides)
-    args.sglang = SglangConfig.parse_args(args)
+    args.sglang, args.sglang_scaling = SglangConfig.parse_args(args)
     return args
 
 

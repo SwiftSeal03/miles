@@ -13,7 +13,7 @@ from miles.utils.external_utils.command_utils.common import encode_pseudo_file
 
 
 def resolve_sglang_config(args):
-    return SglangConfig.parse_args(args)
+    return SglangConfig.parse_args(args)[0]
 
 def _make_args(**overrides) -> Namespace:
     defaults = dict(

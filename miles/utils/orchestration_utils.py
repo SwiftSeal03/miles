@@ -1,9 +1,7 @@
 from argparse import Namespace
 from functools import partial
 
-from ray.actor import ActorHandle
-
-from miles.ray.wiring import launch_worker_manager, shutdown_worker_manager
+from miles.ray.wiring import compute_backend_capability, launch_worker_manager, shutdown_worker_manager
 from miles.utils import object_store
 from miles.utils.async_utils import Disposer
 from miles.utils.audit_utils.event_logger import checkpoint as event_logger_checkpoint
@@ -14,9 +12,10 @@ from miles.utils.test_utils.fault_injector.actions.base import FaultHookResource
 from miles.utils.test_utils.fault_injector.controller import fault_hook_controller
 from miles.utils.test_utils.fault_injector.models import FaultHookOwner
 from miles.utils.tracking_utils.tracking import finish_tracking, init_tracking
+from miles.utils.workers.backend_capability.base import BackendCapability
 
 
-def init_orchestration_script(args: Namespace, *, disposer: Disposer) -> ActorHandle | None:
+def init_orchestration_script(args: Namespace, *, disposer: Disposer) -> BackendCapability:
     event_logger_checkpoint.restore(args)
     configure_logger(args, source=SimpleProcessIdentity(component="main"))
     maybe_start_periodic_pyspy_dump()
@@ -24,6 +23,7 @@ def init_orchestration_script(args: Namespace, *, disposer: Disposer) -> ActorHa
     init_tracking(args)
     worker_manager = launch_worker_manager(args)
     disposer.add(partial(shutdown_worker_manager, worker_manager))
+    capability = compute_backend_capability(args)
     object_store.init_instance(args, contribute_segment=False)
     fault_hook_controller.configure(resources=FaultHookResources(args=args), owner=FaultHookOwner.ORCHESTRATOR)
-    return worker_manager
+    return capability

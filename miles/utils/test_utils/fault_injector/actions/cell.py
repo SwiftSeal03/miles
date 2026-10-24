@@ -63,10 +63,10 @@ class RestartRolloutCellAction(BaseFaultAction):
         assert "rollout" in args.ft_components, "Rollout restart testing requires rollout fault tolerance"
         # Only this test action needs the backend and serving dependencies.
         from miles.ray.specs.inference import POOL_CATEGORY_INFERENCE_ENGINE, create_inference_controller_handle
-        from miles.ray.wiring import get_backend_capability
+        from miles.ray.wiring import compute_backend_capability
         from miles.utils.workers.types import ClusterBackend
 
-        capability = get_backend_capability(args)
+        capability = compute_backend_capability(args)
         receipt = await _restart_rollout_cell(
             self.cell_id,
             operations=capability.cell_operations(),

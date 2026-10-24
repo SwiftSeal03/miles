@@ -104,6 +104,7 @@ def execute_train(
     pod_argv, args = _compute_train_argv(
         request,
         run_uuid=run_uuid,
+        installed_manifest=installed_manifest,
         release=release,
         namespace=namespace,
         env=env,
@@ -320,10 +321,30 @@ def _resolve_run_uuid(config: ExecuteTrainConfig, *, installed_manifest: Manifes
     return generate_run_uuid()
 
 
+def _resolve_wandb_run_id(args: Any, *, installed_manifest: Manifest | None, release: str) -> str | None:
+    if not args.use_wandb:
+        return None
+
+    if (given := args.wandb_run_id) is not None:
+        return given
+
+    if installed_manifest is not None:
+        installed = installed_manifest.flag_value(
+            _WANDB_RUN_ID_FLAG,
+            stateful_set=RunNames.orchestrator_object(release=release),
+            container=naming.ORCHESTRATOR_COMPONENT,
+        )
+        if installed is not None:
+            return installed
+
+    return _generate_wandb_run_id()
+
+
 def _compute_train_argv(
     request: ExecuteTrainRequest,
     *,
     run_uuid: str,
+    installed_manifest: Manifest | None,
     release: str,
     namespace: str,
     env: dict[str, str],
@@ -345,14 +366,18 @@ def _compute_train_argv(
         args = parse_args()
     assert LAUNCHER_REPORT_ENV_VAR not in args.train_env_vars
 
-    # TODO: remove after args refactor handles wandb ids
-    if args.use_wandb and args.wandb_run_id is None:
-        args.wandb_run_id = _generate_wandb_run_id()
-        argv = ArgvManipulator.set(argv, _WANDB_RUN_ID_FLAG, args.wandb_run_id)
+    wandb_run_id = _resolve_wandb_run_id(args, installed_manifest=installed_manifest, release=release)
+    if wandb_run_id is not None:
+        args.wandb_run_id = wandb_run_id
+        argv = ArgvManipulator.set(argv, _WANDB_RUN_ID_FLAG, wandb_run_id)
 
-    pod_argv = MooncakeInfo.with_cluster_master(
-        argv, plan=_compute_mooncake_plan(args), host=MooncakeInfo.master_service_host(release, namespace)
-    )
+    mooncake_plan = _compute_mooncake_plan(args)
+    mooncake_host = MooncakeInfo.master_service_host(release, namespace)
+    pod_argv = MooncakeInfo.with_cluster_master(argv, plan=mooncake_plan, host=mooncake_host)
+    if mooncake_plan is not None:
+        args = args.model_copy(
+            update={"mooncake_store_init_kwargs": MooncakeInfo.cluster_init_kwargs(mooncake_plan, host=mooncake_host)}
+        )
     return pod_argv, args
 
 

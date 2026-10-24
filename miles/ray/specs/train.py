@@ -79,16 +79,13 @@ class TrainerControllerSpec(BaseServeSpec):
     def ctor_kwargs(self, ctx: WorkerCtorContext) -> dict[str, Any]:
         args = ctx.args
         return dict(
+            args=args,
             deployment_identity=DeploymentIdentity(
                 run_uuid=args.run_uuid,
                 deploy_component=args.deploy_component,
                 deploy_instance_id=args.deploy_instance_id,
                 trainer_id=args.trainer_id,
             ),
-            trainer_id=args.trainer_id,
-            role=args.trainer_role,
-            with_ref=(args.trainer_role != CRITIC_ROLE) and (args.kl_coef != 0 or args.use_kl_loss),
-            with_opd_teacher=(args.trainer_role != CRITIC_ROLE) and args.use_opd and args.opd_type == "megatron",
             cell_provider=ctx.capability.dynamic_worker_provider(pool_ids=[compute_trainer_pool_id(args.trainer_id)]),
             cell_operations=ctx.capability.cell_operations(),
         )
