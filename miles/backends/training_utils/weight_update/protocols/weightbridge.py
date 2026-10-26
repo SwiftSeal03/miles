@@ -26,7 +26,6 @@ from miles.backends.training_utils.parallel import ParallelState
 from miles.backends.training_utils.weight_update.hf_weight_iterator import WeightUpdatePlacement
 from miles.backends.training_utils.weight_update.protocol import WeightTransferProtocol
 from miles.backends.training_utils.weight_update.rollout_cell_updater import create_rollout_cell_updaters
-from miles.utils import megatron_bridge_utils
 from miles.utils.distributed_utils import get_gloo_group
 from miles.utils.misc import get_free_port
 
@@ -151,7 +150,10 @@ class UpdateWeightWeightBridge(WeightTransferProtocol):
 
     def _megatron_load_weights(self):
         """Megatron-Bridge's HF->Megatron import, adapted to read WeightBridge's tensor factories."""
+        # Local imports: Megatron-Bridge needs a GPU driver, so the module must import without it on CPU hosts.
         from megatron.bridge import AutoBridge
+
+        from miles.utils import megatron_bridge_utils
 
         bridge = AutoBridge.from_hf_pretrained(self.args.hf_checkpoint, trust_remote_code=True)
         model = self._model
