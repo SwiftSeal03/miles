@@ -143,6 +143,8 @@ class WeightUpdater:
         protocol = self.protocol
         if not protocol.streams_buckets:
             # The protocol owns the engine side end to end: no session RPCs, no HF bucket stream.
+            if not hasattr(protocol, "send_live_weights"):
+                raise TypeError(f"{type(protocol).__name__} sets streams_buckets=False but has no send_live_weights")
             with timer("update_weights_implementation"):
                 protocol.send_live_weights(weight_version)
             return True

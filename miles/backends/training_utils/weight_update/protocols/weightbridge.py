@@ -5,7 +5,8 @@ coordinator and builds a receiver on every TP rank at startup, then polls it fro
 scheduler loop. The trainer connects once through the coordinators; after that an update
 is just ``send_weights()`` on every trainer rank. The receivers notice the trainer's data
 flags, pause (drain and clear requests), load, flush the cache, bump the weight version and
-resume on their own, so an update sends no Ray or HTTP request to the engines.
+resume on their own, so an update sends no Ray or HTTP request to the engines. The trainer's weight
+version rides the update as WeightBridge metadata, so engines label it exactly as the broadcast path does.
 
 Each trainer rank builds a ``SenderAdapter`` whose LoadSpec WeightBridge infers by probing
 Megatron-Bridge's HF->Megatron import over the live Megatron parameters.
@@ -42,8 +43,7 @@ class UpdateWeightWeightBridge(WeightTransferProtocol):
         self._model: Sequence[torch.nn.Module] | None = None
         self._adapter = None
         self._connected_urls: tuple[str, ...] | None = None
-        # Updates delivered so far; engines publish the same count as their weight version.
-        self._num_updates = 0
+        self._epoch = 0
         self._logged_off_gpu = False
 
     def bind_trainer_model(self, model: Sequence[torch.nn.Module]) -> None:
@@ -87,22 +87,19 @@ class UpdateWeightWeightBridge(WeightTransferProtocol):
         raise AssertionError("WeightBridge reads live parameters; the updater must not stream buckets to it")
 
     def send_live_weights(self, weight_version: int) -> None:
-        epoch = self._num_updates
         # EWTT endpoint: wall clock right before send_weights() on every rank.
         logger.info(
-            f"[weightbridge] send_start epoch={epoch} trainer_weight_version={weight_version} t_ns={time.time_ns()}"
+            f"[weightbridge] send_start epoch={self._epoch} trainer_weight_version={weight_version} t_ns={time.time_ns()}"
         )
-        event = self._adapter.send_weights()
+        # The engines label this update with the trainer's version, as the broadcast path's session does.
+        event = self._adapter.send_weights(metadata={"weight_version": weight_version})
         if event is not None:
             event.synchronize()
         if not self.args.weightbridge_async_delivery:
             # Sync semantics: the next rollout must run on these weights, so wait until every receiver loaded them.
             self._adapter.wait_send_complete()
-        self._num_updates += 1
+        self._epoch += 1
         self._adapter.flush_profile_outputs()
-
-    def published_weight_version(self, trainer_weight_version: int) -> int:
-        return self._num_updates
 
     def _build_sender_adapter(self, receiver_urls: list[str]):
         from wbridge.backend.sender import SenderArgs

@@ -78,14 +78,6 @@ class WeightTransferProtocol(ABC):
     def bind_trainer_model(self, model: Sequence[torch.nn.Module]) -> None:  # noqa: B027 — optional hook
         """Hook giving protocols that read live parameters the trainer model chunks."""
 
-    def send_live_weights(self, weight_version: int) -> None:
-        """Send the live trainer weights in one call; used only when ``streams_buckets`` is False."""
-        raise NotImplementedError(f"{type(self).__name__} streams HF buckets")
-
-    def published_weight_version(self, trainer_weight_version: int) -> int:
-        """The version engines report once this sync lands; protocols with their own numbering override it."""
-        return trainer_weight_version
-
     def pop_metrics(self) -> dict[str, float]:
         metrics, self.update_weight_metrics = self.update_weight_metrics, {}
         return metrics
