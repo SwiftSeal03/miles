@@ -1042,6 +1042,7 @@ class MegatronTrainRayActor(TrainRayActor):
                 )
             ):
                 self.weight_updater.update_weights(weight_version=weight_version)
+            weight_version = self.weight_updater.protocol.published_weight_version(weight_version)
             print_memory("after update_weights")
 
             cell_updaters = self.weight_updater.protocol.cell_updaters_of_cell_id

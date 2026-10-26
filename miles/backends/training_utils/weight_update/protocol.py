@@ -29,6 +29,9 @@ class WeightTransferProtocol(ABC):
     # Opt in only when separate instances own independent transfer state.
     supports_receiver_pools: ClassVar[bool] = False
     use_weight_update_session: ClassVar[bool] = True
+    # False: the protocol reads the live trainer weights itself in ``send_live_weights``,
+    # so the updater neither builds HF buckets nor opens an engine session.
+    streams_buckets: ClassVar[bool] = True
     needs_base_resync_for_lora: bool = False
 
     def __init__(self, args: Namespace) -> None:
@@ -72,6 +75,17 @@ class WeightTransferProtocol(ABC):
     def after_engines_resumed(self) -> None:  # noqa: B027 — optional hook
         """Hook once the engines have applied every bucket and resumed generation."""
 
+    def bind_trainer_model(self, model: Sequence[torch.nn.Module]) -> None:  # noqa: B027 — optional hook
+        """Hook giving protocols that read live parameters the trainer model chunks."""
+
+    def send_live_weights(self, weight_version: int) -> None:
+        """Send the live trainer weights in one call; used only when ``streams_buckets`` is False."""
+        raise NotImplementedError(f"{type(self).__name__} streams HF buckets")
+
+    def published_weight_version(self, trainer_weight_version: int) -> int:
+        """The version engines report once this sync lands; protocols with their own numbering override it."""
+        return trainer_weight_version
+
     def pop_metrics(self) -> dict[str, float]:
         metrics, self.update_weight_metrics = self.update_weight_metrics, {}
         return metrics
@@ -79,7 +93,7 @@ class WeightTransferProtocol(ABC):
 
 def get_weight_transfer_protocol(args: Namespace) -> WeightTransferProtocol:
     mode = args.update_weight_transfer_mode
-    if mode not in ("broadcast", "broadcast_packed", "p2p", "disk-delta"):
+    if mode not in ("broadcast", "broadcast_packed", "p2p", "disk-delta", "weightbridge"):
         raise ValueError(f"Unknown --update-weight-transfer-mode {mode!r}")
     if mode == "broadcast_packed" and (args.train_backend != "megatron" or args.colocate):
         raise ValueError("broadcast_packed requires Megatron non-colocated weight transfer")
@@ -99,4 +113,8 @@ def get_weight_transfer_protocol(args: Namespace) -> WeightTransferProtocol:
         from miles.backends.training_utils.weight_update.protocols.p2p import UpdateWeightP2P
 
         return UpdateWeightP2P(args)
+    if mode == "weightbridge":
+        from miles.backends.training_utils.weight_update.protocols.weightbridge import UpdateWeightWeightBridge
+
+        return UpdateWeightWeightBridge(args)
     raise ValueError(f"Unknown --update-weight-transfer-mode {mode!r}")

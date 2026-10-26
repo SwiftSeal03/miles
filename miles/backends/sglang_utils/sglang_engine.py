@@ -140,6 +140,11 @@ def _compute_server_args(
         kwargs["disaggregation_mode"] = WorkerType.DECODE.value
         kwargs["prefill_round_robin_balance"] = True
 
+    if args.update_weight_transfer_mode == "weightbridge":
+        # The engine receives updates through WeightBridge and applies miles' pause mode itself.
+        kwargs["enable_weightbridge_receiver"] = True
+        kwargs["weightbridge_pause_mode"] = args.pause_generation_mode
+
     if args.use_rollout_routing_replay:
         kwargs["enable_return_routed_experts"] = True
     if args.use_rollout_indexer_replay:
