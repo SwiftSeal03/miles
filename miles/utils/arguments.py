@@ -1276,9 +1276,9 @@ def miles_validate_args(args):
         assert not args.colocate, "WeightBridge weight transfer needs disaggregated trainer and rollout GPUs."
         assert args.train_backend == "megatron", "WeightBridge weight transfer is implemented for Megatron trainers."
         assert args.lora_rank <= 0, "LoRA weight sync is not supported for WeightBridge weight transfer."
-        assert not args.fully_async, (
-            "--fully-async keeps generation in flight, while a WeightBridge update retracts or aborts every request"
-        )
+        assert (
+            not args.fully_async
+        ), "--fully-async keeps generation in flight, while a WeightBridge update retracts or aborts every request"
         assert args.pause_generation_mode in ("retract", "abort"), (
             "WeightBridge updates clear in-flight requests before writing weights, so in_place pausing, which keeps "
             "KV computed under the old weights, does not apply"

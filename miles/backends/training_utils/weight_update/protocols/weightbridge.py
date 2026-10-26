@@ -67,7 +67,9 @@ class UpdateWeightWeightBridge(WeightTransferProtocol):
         receiver_urls = tuple(_coordinator_url(engine.server_url) for engine in rollout_engines)
         if self._connected_urls is not None:
             if receiver_urls != self._connected_urls:
-                raise NotImplementedError("WeightBridge reconnect to a changed rollout engine set is not supported yet")
+                raise NotImplementedError(
+                    "WeightBridge reconnect to a changed rollout engine set is not supported yet"
+                )
             return
 
         start = time.monotonic()
@@ -142,7 +144,9 @@ class UpdateWeightWeightBridge(WeightTransferProtocol):
         off_gpu = {name: str(tensor.device) for name, tensor in params.items() if not tensor.is_cuda}
         if off_gpu and not self._logged_off_gpu:
             self._logged_off_gpu = True
-            logger.warning(f"[weightbridge] {len(off_gpu)} trainer parameters are not on CUDA and are not sent: {off_gpu}")
+            logger.warning(
+                f"[weightbridge] {len(off_gpu)} trainer parameters are not on CUDA and are not sent: {off_gpu}"
+            )
         return {name: tensor for name, tensor in params.items() if tensor.is_cuda}
 
     def _megatron_load_weights(self):
