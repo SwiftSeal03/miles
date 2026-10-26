@@ -1284,9 +1284,10 @@ def miles_validate_args(args):
             "KV computed under the old weights, does not apply"
         )
         assert args.prefill_num_servers is None, "WeightBridge weight transfer does not support PD disaggregation."
-        assert (
-            args.sglang_pp_size == 1 and args.sglang_dp_size == 1
-        ), "WeightBridge receivers assume one TP group per engine (rollout pp_size == dp_size == 1)."
+        assert args.sglang_dp_size == 1 and args.sglang_attn_dp_size <= 1, (
+            "WeightBridge receivers support TP and PP engines (across nodes too), not data parallelism "
+            "(rollout dp_size == 1, no attention DP)."
+        )
 
     if args.update_weight_transfer_mode == "disk-delta":
         assert not args.colocate, (
